@@ -1,0 +1,228 @@
+================================================================================
+BUGHUNT-TALOS: boot hang at "waitForUdevd" on HP EliteBook 840 G7 (branch wifi)
+Audit of git range ea5484ba2..wifi (+ fork pkgs commits), 2026-08-31
+================================================================================
+
+SCOPE AUDITED
+  talos repo:  9 commits (20f699b70 .. 2ef37f0df), full flattened diff read
+               (36 files: Dockerfile, Makefile, udev rules, SELinux policy,
+               wifi controllers, wpa_supplicant service, resource/config
+               plumbing, module lists).
+  pkgs fork:   2dd498d (wireless kernel config amd64 + wpa-supplicant pkg),
+               def4533 (arm64 kernel config), 0b6ced8 (wireless-regdb pkg).
+  runtime lib: cosi-project/runtime v1.16.2 restart semantics
+               (~/go/pkg/mod/.../pkg/controller/runtime/internal/rruntime/run.go).
+
+WHAT "STUCK AT waitForUdevd" MEANS MECHANICALLY
+  WaitForUdevd (internal/app/machined/pkg/runtime/v1alpha1/v1alpha1_sequencer_tasks.go:79)
+  waits for the udevd service to reach StateEventUp (running AND healthy).
+  udevd health (internal/app/machined/pkg/system/services/udevd.go:104-167) =
+    `udevadm control --reload` -> `udevadm trigger --type=devices/--type=subsystems
+    --action=add` -> `udevadm settle --timeout=50` (+ ExtraSettleTime).
+  "udevd process visible but never healthy" == the settle queue never drains
+  (or reload/trigger fails every round). That also explains everything else:
+  no NIC modules get loaded by udevd's kmod builtin -> dashboard "(none)";
+  USB/ISO block device never appears -> VolumeManager platform/metal-iso/config
+  waiting -> missing -> closed. One root cause, all symptoms downstream.
+
+  Corollary: the culprit must act on the udev event queue BEFORE any wifi
+  controller ever runs (see clearance of suspect area 2 below).
+
+--------------------------------------------------------------------------------
+AREA-BY-AREA FINDINGS
+--------------------------------------------------------------------------------
+
+[1] hack/udevd/90-selinux.rules rfkill SECLABEL line  -> LARGELY CLEARED
+  The only udev-visible change on the branch:
+    KERNEL=="rfkill",SECLABEL{selinux}="system_u:object_r:rfkill_device_t:s0"
+  (added in 90fc58313, inserted before the existing "zero" line - syntactically
+  fine; upstream file already uses SECLABEL for tpm/tpmrm/watchdog/null).
+
+  a) Type exists in the shipped policy. `strings internal/pkg/selinux/policy/
+     policy.33` contains rfkill_device_t (and wpa_supplicant_{t,exec_t,run_t}).
+     The machined binary embeds the COMMITTED policy.33 (Dockerfile `base`
+     stage copies ./internal as-is; the `selinux` secilc stage feeds only the
+     `generate` stage / `make generate`). So the udev context resolves in the
+     loaded policy; setfilecon will not get EINVAL.
+  b) systemd-udevd v257 semantics: SECLABEL failure in udev-node permission
+     application is log-and-continue (log_device_error_errno path), it does not
+     fail or retry the event, and cannot wedge a worker. Worst case = one error
+     line per event.
+  c) THE KEY QEMU FACT: the rule matches only the rfkill MISC device
+     (/dev/rfkill), not rfkill0/rfkill1 class devices (those have no devnode,
+     SECLABEL is a devnode operation). With the fork kernel's CONFIG_RFKILL=y
+     (builtin), rfkill_init() registers /dev/rfkill unconditionally at boot on
+     EVERY machine - including QEMU. The QEMU run therefore already exercised
+     this exact rule+policy combination and passed. The premise "QEMU has no
+     rfkill" is only true for rfkill class devices, which this rule ignores.
+  Residual risk (small, cheap to kill): there is a commit window
+  90fc58313..b71ff255e where the rule references rfkill_device_t but the
+  committed policy.33 did not yet contain it. An ISO built inside that window
+  would log SECLABEL EINVAL on /dev/rfkill (still non-fatal per (b)). Verify
+  the QEMU-tested ISO and the laptop-flashed ISO are the same sha256 and built
+  from 2ef37f0df.
+
+[2] Wifi controllers / wpa_supplicant service  -> CLEARED as boot blocker
+  (internal/app/machined/pkg/controllers/network/wifi_{config,service,status}.go,
+   watch/nl80211.go, system/services/wpa_supplicant.go,
+   runtime/v1alpha2/v1alpha2_controller.go + v1alpha2_state.go)
+
+  - WifiStatusController.Run first blocks in runtime.WaitForDevicesReady()
+    (controllers/runtime/utils.go:23), which waits for runtime.DevicesStatus
+    .Ready - and DevicesStatus only becomes Ready AFTER udevd settles. During
+    the observed hang this controller is parked on r.EventCh(); it cannot be
+    cause, only victim (circular the wrong way round).
+  - nl80211-family-missing path (iwlwifi blacklisted, cfg80211 never loads):
+    watch.NewNL80211 -> conn.GetFamily("nl80211") fails -> controller logs
+    debug and `return nil`. In cosi runtime v1.16.2 rruntime/run.go:26-28,
+    a controller whose Run returns nil is NOT restarted - the adapter's loop
+    does `if err == nil { return }`. There is no tight error/restart loop, no
+    backoff churn, no runtime starvation. (Confirmed empirically too: the QEMU
+    boot with e1000-only hardware took exactly this path and reached
+    maintenance mode.)
+  - The wifi.Client dial happens once per Run invocation, not per iteration;
+    an error inside reconcile() returns from Run -> single backoff restart ->
+    re-blocks in WaitForDevicesReady. Sane.
+  - WifiServiceController is purely event-driven on WifiSpec+LinkStatus; with
+    no machine config there are no WifiSpecs, reconcile() desired set is empty,
+    it idles on EventCh. It never touches udevd, never runs at "Booting" stage.
+  - WifiConfigController waits on MachineConfig; inert pre-config.
+  - wpa_supplicant service is only Loaded/Started by WifiServiceController
+    (never at boot); Condition waits for its config file; cannot block the
+    sequencer.
+  - Registration diffs (v1alpha2_controller.go +5, v1alpha2_state.go +2) are
+    plain additions; system.Services(ctrl.v1alpha1Runtime) uses the same
+    runtime singleton pattern as the existing UdevServiceController wiring.
+
+  Non-blocking BUG found here anyway: because return-nil == permanent stop,
+  WifiStatusController permanently disables itself on machines where wifi
+  hardware/extension appears after first devices-ready (or where cfg80211
+  loads late). Should retry/watch instead. Not related to the hang.
+
+[3] SELinux policy / file_contexts regen  -> CLEARED
+  - Binary header of policy.33 identical to base (version 0x21=33, same flags,
+    same MLS config) - `xxd` compare.
+  - `strings` diff base vs wifi policy.33: ONLY additions (rfkill_device_t,
+    wpa_supplicant, wpa_supplicant_exec_t, wpa_supplicant_run_t,
+    wpa_supplicant_t). No types/labels removed or renamed; udev_t/init_t etc.
+    all intact. A different secilc did not perturb the rest of the policy.
+  - file_contexts: exactly +3 lines (/run/wpa_supplicant, /usr/bin/
+    wpa_supplicant, /usr/local/bin/wpa_supplicant). No path used by udevd,
+    machined or block discovery was relabeled. The labeled-squashfs helper
+    (tools/labeled-squashfs, unchanged) consumes this committed file; new
+    entries only affect the new wpa binaries.
+  - Even in the worst case, cmdline is selinux=1 WITHOUT enforcing -> policy
+    loaded permissive; label problems cannot deny operations.
+  - Same policy blob booted fine in QEMU -> policy load itself is proven good.
+
+[4] Dockerfile / Makefile  -> CLEARED for the hang; one real side bug (arm64)
+  - pkg-wpa-supplicant image content verified from
+    /Users/tom/Documents/Projects/talos-pkgs/wpa-supplicant/pkg.yaml:
+    variant scratch; installs ONLY /usr/bin/{wpa_supplicant,wpa_cli,
+    wpa_passphrase} + /usr/share/spdx/wpa-supplicant.spdx.json; passes
+    fhs-validator. `COPY --from=pkg-wpa-supplicant-amd64 / /rootfs` cannot
+    clobber /usr/lib, ld caches or symlinks. (And any pure image-content
+    breakage is excluded anyway: QEMU boots the identical ISO.)
+  - amd64 firmware copies (regulatory.db{,.p7s} from wireless-regdb;
+    iwlwifi-Qu*-hr-b0-*.ucode into both layouts) are additive files in
+    /usr/lib/firmware; kernel FW loader is direct (CONFIG_FW_LOADER_USER_HELPER
+    not set -> no 60s usermode-helper stall class).
+  - SIDE BUG (build-time, arm64 only, unrelated to the laptop): the arm64
+    branch copies `regulatory.db` and top-level `iwlwifi-Qu*.ucode` from
+    pkg-linux-firmware, but per pkgs commit 0b6ced8 the linux-firmware archive
+    does NOT contain regulatory.db, and iwlwifi ucode lives under
+    /usr/lib/firmware/intel/iwlwifi/ (that is exactly what d7fb348a3 fixed for
+    amd64). The arm64 rootfs target should fail on these COPY globs; parity
+    commit 65226b010 was not updated by the amd64 path fix.
+
+[5] Everything else in the range  -> CLEARED
+  - constants.go: new constants only.
+  - machinery config/resource plumbing (NetworkWifiConfig doc, WifiSpec/
+    WifiStatus resources, deep-copy/redact/proto): correctly registered
+    (protobuf.RegisterDynamic in init()), additive, not on the boot path.
+  - Merge 63513bb01 adds only WIFI-COMPLIANCE.md + the wifi-compliance commits
+    already audited; no cmdline/sequencer/boot changes anywhere in the range.
+  - 2ef37f0df: PKGS back to upstream tag v1.15.0-alpha.0-13-gb6b2843; fork
+    packages (kernel, wpa-supplicant, wireless-regdb) injected via PKG_*
+    overrides at build time. NOTE: this means the ISO kernel is the FORK
+    kernel build, not the upstream-published one.
+  - module_blacklist=iwlwifi is enforced inside kernel load_module() for ALL
+    loaders including udevd's finit_module, so the blacklist test genuinely
+    removed iwlwifi+firmware+cfg80211 from the picture. All wifi module /
+    firmware / regdb load paths are exonerated for the hang by that test.
+
+--------------------------------------------------------------------------------
+TOP 3 SUSPECTS (ranked, with mechanism + cheap disconfirming test)
+--------------------------------------------------------------------------------
+
+#1  THE FORK KERNEL BUILD (pkgs 6.18.46 + wireless config delta), not the
+    talos repo diff.  Confidence this is where the bug lives: high, by
+    elimination - every userland/rootfs change on the branch is either
+    exercised identically in QEMU (same ISO boots: same policy, same udev
+    rules, same wpa binary, /dev/rfkill present in QEMU too) or provably
+    parked until after udevd settles. The only branch component that behaves
+    differently on real HP hardware is the kernel: CONFIG_RFKILL=y,
+    CONFIG_WLAN=y, LEDS/rfkill wiring now compiled into builtin ACPI/platform
+    driver paths that probe EliteBook hardware (WMI, EC, hotkeys) during the
+    udev trigger storm, plus the fact that it is a different kernel BUILD
+    (fork registry) than the upstream-published 6.18.46. A single device whose
+    uevent/probe blocks >50s on every `udevadm trigger` retry keeps settle
+    timing out forever == exactly this symptom.
+    DISCONFIRM (cheap, decisive bisect of kernel vs rootfs):
+      a) Build the branch-wifi ISO with upstream kernel only:
+         `make iso PKG_KERNEL=ghcr.io/siderolabs/kernel:<upstream tag>`
+         (keep wpa/regdb overrides; wifi won't function - irrelevant).
+         Boots on laptop => kernel delta guilty.
+      b) Converse: vanilla main-HEAD rootfs + fork kernel => hangs => confirmed.
+      (The running vanilla-main A/B answers only half of this matrix - vanilla
+      main uses the upstream kernel, so "vanilla works" does NOT yet acquit
+      our rootfs until (a) is run.)
+
+#2  udev rfkill SECLABEL rule + policy window / artifact mismatch.
+    Mechanism would be: udev worker failing or looping while labeling
+    /dev/rfkill. Code analysis says non-fatal (udevd logs and continues) and
+    rfkill_device_t IS in the shipped policy, and QEMU already exercised the
+    rule (/dev/rfkill exists there too, RFKILL=y is builtin) - so this is a
+    weak suspect kept at #2 only because it is the sole udev-visible change
+    and dirt cheap to eliminate.
+    DISCONFIRM: rebuild ISO with the one rfkill line deleted from
+    hack/udevd/90-selinux.rules; boot laptop. Also sha256-compare the ISO file
+    QEMU booted vs the file flashed to USB (rules commit 90fc58313 and policy
+    regen b71ff255e are 30 min apart - make sure both tests used a
+    post-b71ff255e artifact), and re-flash to rule out a bad USB write
+    (a corrupted squashfs on USB reproduces "modules never load" symptoms
+    while QEMU boots the intact file perfectly).
+
+#3  Wifi controllers starving/blocking machined - CLEARED, listed to close it
+    out explicitly: WifiStatusController blocks in WaitForDevicesReady (which
+    only unblocks AFTER udevd settles - wrong direction to cause this);
+    nl80211-missing => Run returns nil => cosi v1.16.2 permanently retires the
+    controller (rruntime/run.go: `if err == nil { return }`) - no restart
+    loop, no backoff churn; WifiService/WifiConfig idle without machine
+    config; wpa_supplicant service never loaded at boot. QEMU (e1000, no
+    nl80211) walked these exact paths to maintenance mode.
+    DISCONFIRM (if paranoid): build with the three controller registrations
+    removed from v1alpha2_controller.go; boot laptop. Expected: still hangs.
+
+BEST SINGLE DIAGNOSTIC regardless of suspect: boot the laptop with extra args
+`udev.log_level=debug` (and optionally `udev.event_timeout=20`), then read the
+udevd service log from the dashboard log pane. The stuck/killed event will name
+the exact device/driver; `udevadm settle` timeout messages will confirm the
+health-check theory within one boot.
+
+--------------------------------------------------------------------------------
+SIDE FINDINGS (real issues, NOT the hang)
+--------------------------------------------------------------------------------
+ 1. arm64 Dockerfile firmware COPYs reference non-existent linux-firmware
+    paths (regulatory.db, top-level iwlwifi-Qu*.ucode) - arm64 rootfs build
+    will fail; 65226b010 missed the d7fb348a3 path fix.  [Dockerfile ~L898]
+ 2. WifiStatusController permanently disables itself when nl80211 is absent at
+    first devices-ready (return nil == never restarted in cosi v1.16.2); wifi
+    plugged/extension-loaded later is never observed.  [wifi_status.go:70-84]
+ 3. WifiServiceController logs a Warn for every non-ether link on every
+    reconcile - log spam once wifi configs exist.  [wifi_service.go:111-115]
+ 4. Commit-window hygiene: 90fc58313 ships a udev rule referencing a type that
+    only exists in policy.33 as of b71ff255e; intermediate builds emit
+    SECLABEL errors on /dev/rfkill. Squash rule+policy regen in one commit
+    when upstreaming.
+================================================================================
