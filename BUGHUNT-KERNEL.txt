@@ -1,0 +1,238 @@
+================================================================================
+BUGHUNT-KERNEL.txt — kernel-config surface analysis
+Custom Talos build hangs at waitForUdevd on HP EliteBook 840 G7 (Comet Lake,
+i5-10310U, AX201 CNVi). Official v1.14.0-beta.1 / v1.13.9 boot fine; custom
+build boots fine in QEMU. Kernel version unchanged (6.18.46) vs fork base.
+Analysis date: 2026-08-31. READ-ONLY investigation; no files modified.
+================================================================================
+
+SURFACE EXAMINED
+  - talos-pkgs (branch wifi):  git diff b6b2843..wifi
+      * kernel/build/config-amd64 (144 lines), config-arm64 (analogous)
+      * Makefile/Pkgfile: only adds wireless-regdb 2026.05.30 and
+        wpa_supplicant 2.11 package definitions. NOTHING ELSE. Kernel source,
+        patches, toolchain untouched. So the kernel-side delta is EXACTLY the
+        config diff.
+  - talos-wifi (this repo): hack/modules-amd64.txt (+4 modules: cfg80211.ko,
+    mac80211.ko, iwlwifi.ko, iwlmvm.ko), Dockerfile (iwlwifi-Qu*.ucode +
+    regulatory.db(.p7s) into rootfs firmware dir), new machined wifi
+    controllers, new udev SELinux rule for /dev/rfkill, regenerated SELinux
+    policy, wpa_supplicant service.
+
+--------------------------------------------------------------------------------
+1. WHAT THE CONFIG DIFF ACTUALLY CHANGES (exhaustive triage of ~137 lines)
+--------------------------------------------------------------------------------
+Behavior-relevant changes:
+  a) CONFIG_RFKILL=y, CONFIG_RFKILL_LEDS=y            <-- BUILTIN (only builtin
+     behavioral change in the whole diff)
+  b) CONFIG_CFG80211=m (+REQUIRE_SIGNED_REGDB=y, USE_KERNEL_REGDB_KEYS=y,
+     CRDA_SUPPORT=y, DEFAULT_PS=y)                    <-- module
+  c) CONFIG_MAC80211=m, MAC80211_LEDS=y, minstrel     <-- module
+  d) CONFIG_IWLWIFI=m, IWLMVM=m, IWLWIFI_LEDS=y,
+     IWLWIFI_OPMODE_MODULAR=y, IWLWIFI_DEVICE_TRACING=y  <-- modules
+  e) CONFIG_RTL_CARDS=m (umbrella only; no RTL driver enabled -> no .ko built)
+
+Everything else in the diff is NEWLY-VISIBLE-BUT-DISABLED options that only
+became selectable because RFKILL/WLAN turned on, all "# ... is not set":
+  USB_HSO, AMILO_RFKILL, INTEL_OAKTRAIL, IDEAPAD_LAPTOP, MSI_LAPTOP,
+  COMPAL_LAPTOP, SONY_LAPTOP, all WLAN_VENDOR_* sub-drivers except iwlwifi,
+  NL80211_TESTMODE, CFG80211_WEXT, MAC80211_MESH, RFKILL_INPUT, RFKILL_GPIO...
+  => zero code compiled in from these. Confirmed no other pre-existing =y/=m
+  option changed value anywhere in the diff.
+
+LEDs angle (task item 2): IWLWIFI_LEDS=y / MAC80211_LEDS=y / RFKILL_LEDS=y did
+NOT pull in new subsystems — CONFIG_NEW_LEDS=y, LEDS_CLASS=y, LEDS_TRIGGERS=y
+were ALREADY builtin in the base config (config lines 5879-5954, unchanged; no
+LED options appear in the diff). The LED code that is new lives inside the
+wifi modules themselves (iwlwifi led.c registers an led_classdev + mac80211
+led triggers at probe/ieee80211_register_hw time).
+
+hp-wmi angle (task item 1): DEAD END — hp-wmi is NOT built at all.
+  # CONFIG_X86_PLATFORM_DRIVERS_HP is not set   (config line 6332, unchanged)
+  # CONFIG_INTEL_HID_EVENT is not set
+  # CONFIG_BT is not set
+  CONFIG_ACPI_WMI=m / CONFIG_WMI_BMOF=m (wmi.ko, wmi-bmof.ko in squashfs) have
+  no rfkill code. The only rfkill-capable platform module shipped in the
+  squashfs is eeepc-laptop.ko (CONFIG_EEEPC_LAPTOP=m, pre-existing), which
+  binds only ASUS ACPI IDs (ASUS010/EEEPC) — cannot probe on an HP.
+  => With the wifi modules NOT loaded, RFKILL=y on this laptop only registers
+  the rfkill core class + /dev/rfkill misc device; NO driver registers an
+  rfkill switch. There is no platform::hpqXXXX rfkill on this build, and no
+  known-hang WMI path is reachable through this diff.
+
+--------------------------------------------------------------------------------
+2. WHY THE SYMPTOMS ALL CHAIN FROM ONE STUCK UDEV EVENT
+--------------------------------------------------------------------------------
+internal/app/machined/pkg/system/services/udevd.go HealthFunc:
+  udevadm trigger --type=devices/--type=subsystems (once), then
+  `udevadm settle --timeout=50` EVERY health period. settle exits non-zero
+  while the udev event queue is non-empty -> udevd never "healthy" ->
+  sequencer task waitForUdevd (v1alpha1_sequencer_tasks.go:79) loops forever.
+A udev worker stuck in D-state inside a module probe keeps the queue non-empty
+permanently (udevd's worker kill can't reap an uninterruptible task).
+
+Cascade (explains the "extra" symptoms — they are not independent failures):
+  - "no network interfaces": network.LinkStatusController / LinkSpecController
+    gate on runtime.WaitForDevicesReady (= udevd healthy) — link_status.go,
+    link_spec.go. Never fires. (Also e1000e is =m; the I219 NIC only appears
+    via udev coldplug modprobe anyway.)
+  - "config partition missing": CONFIG_BLK_DEV_NVME=m — the NVMe disk itself
+    only appears when udev coldplug modprobes nvme.ko; volume discovery also
+    effectively waits behind devices-ready/udev symlink processing. A wedged
+    udevd event queue (or a stuck worker holding a lock that later probes
+    need, e.g. rtnl_lock held by a wedged register path) starves both.
+  - QEMU fine: no AX201, no CNVi, no WMI — wifi modules never probe there;
+    rfkill core is present in QEMU too and is harmless alone.
+
+--------------------------------------------------------------------------------
+3. AUTOLOAD ANALYSIS (task item 5): what can load cfg80211/mac80211?
+--------------------------------------------------------------------------------
+  - udev coldplug: PCI modalias of AX201 (8086:02f0) -> iwlwifi.ko, which
+    pulls cfg80211+mac80211 as deps, then request_module()s iwlmvm from its
+    firmware-load callback (IWLWIFI_OPMODE_MODULAR=y). This is the ONLY
+    coldplug path; cfg80211/mac80211 have no device modalias of their own.
+  - MACHINED AUTOLOADS CFG80211 ITSELF (finding): the new
+    network.WifiStatusController calls watch.NewNL80211 ->
+    genetlink GetFamily("nl80211")
+    (internal/app/machined/pkg/controllers/network/watch/nl80211.go:42).
+    A genetlink CTRL_CMD_GETFAMILY for an unknown family makes the kernel
+    request_module("net-pf-16-proto-16-family-nl80211"), which matches
+    cfg80211's MODULE_ALIAS_GENL_FAMILY("nl80211") -> cfg80211.ko loads even
+    with iwlwifi blacklisted. Same for the mdlayher/wifi client (wifi.New()).
+    HOWEVER this controller first blocks in WaitForDevicesReady
+    (wifi_status.go:55), so it CANNOT be the cause of the waitForUdevd hang —
+    it never runs during the hang. It matters for two reasons:
+      * any post-boot A/B test "wireless stack never loads because iwlwifi is
+        blacklisted" is WRONG unless cfg80211/mac80211 are blacklisted too;
+      * comment in nl80211.go ("fails if ... cfg80211 not loaded") is
+        inaccurate — the call itself loads it.
+  - rfkill (builtin) does NOT pull cfg80211; nothing modprobes rfkill (builtin)
+    or cfg80211 by name anywhere in the repo (grep clean).
+  - Talos KernelModuleSpecController only loads modules from machine config —
+    which never loads here — so no other autoload path exists.
+
+  IMPORTANT caveat on the failed blacklist test: HOW iwlwifi was blacklisted
+  matters. A machine-config-based blacklist can never take effect on this
+  laptop (the config partition is never discovered — chicken-and-egg). Only a
+  boot-loader-edited kernel arg works: `module_blacklist=iwlwifi,iwlmvm`
+  (kernel-enforced, absolute) or `modprobe.blacklist=` (libkmod, honored for
+  udev alias loads). If the prior test used talosctl/machine config, it
+  silently did nothing and suspect #1 below is still fully live.
+
+--------------------------------------------------------------------------------
+4. RANKED SUSPECTS
+--------------------------------------------------------------------------------
+SUSPECT 1 (most likely): iwlwifi/iwlmvm probe wedges a udev worker on the
+AX201 CNVi — LED-registration / opmode-modprobe deadlock class, newly armed
+by CONFIG_IWLWIFI_LEDS=y + CONFIG_MAC80211_LEDS=y.
+  Mechanism: udev coldplug modprobes iwlwifi in a udev worker; iwlwifi's fw
+  callback request_module()s iwlmvm while holding iwlwifi_opmode_table_mtx;
+  mvm/mac80211 registration then registers led_classdev/led triggers
+  (led_access, triggers_list, flush_work). Exactly this shape produced a
+  bisected boot hang on LKML ("6.9.0-rc2+ kernel hangs on boot ... maybe LED
+  related": modprobe holding iwlwifi_opmode_table_mtx + led_cdev->led_access,
+  tasks stuck in __flush_work; workaround was removing iwlwifi LED
+  registration). Official Talos never builds iwlwifi at all, so the laptop
+  never exercised this path before. CNVi firmware handshake stalls
+  (iwl_pcie_prepare_card_hw / ME-owned NIC) are a second wedge point in the
+  same probe, also D-state.
+  Consistency: explains laptop-vs-QEMU, official-vs-custom perfectly. The
+  "blacklist didn't fix" datum argues against it ONLY if the blacklist
+  mechanism was actually effective (see caveat above).
+  CHEAP DISCONFIRMING TEST (no rebuild): at the GRUB/ISO prompt append
+      module_blacklist=iwlwifi,iwlmvm,cfg80211,mac80211
+  and confirm on the console that dmesg shows "Module iwlwifi is blacklisted".
+  Boots -> confirmed. Still hangs -> iwlwifi and the whole wifi module set are
+  exonerated, go to suspect 2. Bonus pinpointer for any hang: also add
+      udev.event_timeout=15 udev.log_level=info
+  systemd-udevd will log "worker [PID] .../devices/... timeout; kill it" and
+  "seq N '.../0000:00:14.3' killed" on the console — that line NAMES the
+  stuck device/event regardless of which suspect is real. If the worker is
+  D-state the kill fails but the log still identifies it.
+
+SUSPECT 2: CONFIG_RFKILL=y (builtin) — the only builtin behavioral delta —
+interacting with the NEW udev SELinux labeling rule for /dev/rfkill.
+  Mechanism: rfkill core now creates /dev/rfkill + rfkill class at every boot.
+  This branch ALSO added (commit 90fc58313) to hack/udevd/90-selinux.rules:
+      KERNEL=="rfkill",SECLABEL{selinux}="system_u:object_r:rfkill_device_t:s0"
+  and regenerated the policy blob (b71ff255e). A SECLABEL against a type the
+  loaded policy binary doesn't carry, or an selabel/setfilecon failure inside
+  udevd, stalls/errors that event during coldplug. No driver on this laptop
+  registers an rfkill switch (sec.1), so the exposure is only the core device
+  node + udev/SELinux processing — a hang here is mechanistically weak, but it
+  is THE remaining delta if suspect 1 is genuinely excluded. Counter-evidence:
+  QEMU runs the same rootfs+kernel and boots, and Talos SELinux is permissive
+  unless `enforcing=1` — so this only stays alive if the laptop boots with
+  enforcing=1 or a different image than the QEMU test.
+  CHEAP TESTS (no rebuild):
+    - ensure the laptop is NOT booted with enforcing=1 (remove it if present);
+    - byte-compare the image/ISO used on laptop vs QEMU (rule out testing two
+      different builds);
+    - udev.log_level=debug on cmdline: look for the rfkill event and any
+      "SECLABEL" / selinux errors on console.
+  Definitive (small rebuild, config-only): set CONFIG_RFKILL=m — then rfkill
+  only loads with cfg80211 and becomes blacklistable via
+  module_blacklist=rfkill for a clean A/B. (There is no boot param to disable
+  a builtin rfkill; rfkill.master_switch_mode needs RFKILL_INPUT which is off,
+  so it is NOT a usable lever on this build.)
+
+SUSPECT 3: cfg80211 regulatory-db loading path
+(CFG80211_REQUIRE_SIGNED_REGDB=y + USE_KERNEL_REGDB_KEYS=y + CRDA_SUPPORT=y).
+  Mechanism: on cfg80211 load, regulatory_init requests firmware
+  "regulatory.db"/"regulatory.db.p7s" and verifies the signature against
+  wireless-regdb keys built into the kernel. The Dockerfile copies regdb files
+  from linux-firmware, but the PKGS pin was reverted to the upstream tag
+  (talos-wifi 2ef37f0df) while wireless-regdb 2026.05.30 was added as a NEW
+  pkg — if the regdb file shipped in the rootfs is signed by a key newer than
+  the 6.18 kernel's embedded wireless-regdb cert, signature verification
+  fails; combined with signed-fw-load retry/crda udev events this is a
+  plausible slow/wedged event source, and a guaranteed later functional bug
+  (regdomain stuck at "00", 5 GHz channels disabled) even if not the hang.
+  Only reachable when cfg80211 loads: as iwlwifi's dep at coldplug, or later
+  via machined's nl80211 GetFamily (sec.3) — the latter is post-settle, so
+  this can only cause THE BOOT HANG through the iwlwifi coldplug chain.
+  CHEAP DISCONFIRMING TEST: same cmdline as suspect 1 (cfg80211 is in the
+  blacklist set). If suspect-1 test boots, re-test with only
+  module_blacklist=iwlwifi,iwlmvm (letting machined load bare cfg80211 later):
+  if THAT still boots and wifi-status logs show cfg80211 loaded, regdb loading
+  is exonerated for hangs; check `dmesg | grep -i regulatory` for
+  "loading regulatory.db failed"/signature errors to catch the functional bug.
+
+--------------------------------------------------------------------------------
+5. EXPLICITLY RULED OUT / SECONDARY NOTES
+--------------------------------------------------------------------------------
+  - hp-wmi rfkill theory: impossible on this build; driver not compiled
+    (sec.1). hp_wmi.blacklist / hp-wmi kernel args are no-ops here.
+  - intel-hid, Bluetooth, RFKILL_INPUT, dell/asus/acer WMI: all disabled.
+  - All other diff lines are "not set" — no code change.
+  - LEDS subsystem: pre-existing =y; no new subsystem enabled by olddefconfig.
+  - IWLWIFI_DEVICE_TRACING=y: tracepoints inside iwlwifi.ko only.
+  - Firmware glob `iwlwifi-Qu*.ucode` DOES match the QuZ-a0-hr-b0 files the
+    CML-LP AX201 needs (Qu* ⊇ QuZ*), so firmware presence is OK; a missing-
+    firmware probe would error out, not hang, anyway.
+  - wpa_supplicant service: only instantiated from NetworkWifiConfig machine
+    config -> never runs here (config never loads). Not a boot factor.
+  - modules.dep/alias regeneration for the 4 added .ko files: a metadata
+    mismatch would cause failed modprobes (fast errors), not a settle hang,
+    and QEMU's module loading works — ruled out.
+  - Parallel A/B assumption honored: vanilla main + 6.18.46 presumed good;
+    all analysis is strictly about the fork's config/module/rootfs delta.
+
+SOURCES (external)
+  - LKML: "6.9.0-rc2+ kernel hangs on boot (bisected, maybe LED related)" —
+    iwlwifi LED registration deadlock, iwlwifi_opmode_table_mtx +
+    led_cdev->led_access, __flush_work stacks:
+    https://lkml.iu.edu/hypermail/linux/kernel/2405.0/05755.html
+    (and https://lkml.rescloud.iu.edu/2404.1/11114.html)
+  - Ubuntu LP#2033124 — AX201 hard-blocked/RFKILL on HP after fw/BIOS
+    interaction; workaround included blacklisting hp_wmi (not applicable
+    here, hp-wmi not built, but documents HP+AX201 rfkill flakiness):
+    https://bugs.launchpad.net/ubuntu/+source/linux-firmware/+bug/2033124
+
+KEY FILES
+  /Users/tom/Documents/Projects/talos-pkgs kernel/build/config-amd64 (branch wifi)
+  /Users/tom/Documents/Projects/talos-wifi/hack/modules-amd64.txt
+  /Users/tom/Documents/Projects/talos-wifi/hack/udevd/90-selinux.rules
+  /Users/tom/Documents/Projects/talos-wifi/internal/app/machined/pkg/system/services/udevd.go
+  /Users/tom/Documents/Projects/talos-wifi/internal/app/machined/pkg/controllers/network/watch/nl80211.go
+  /Users/tom/Documents/Projects/talos-wifi/internal/app/machined/pkg/controllers/network/wifi_status.go
