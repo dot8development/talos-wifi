@@ -805,6 +805,10 @@ COPY --link --from=pkg-wireless-regdb /usr/lib/firmware/regulatory.db /usr/lib/f
 # depending on the kernel version, so provide both layouts
 COPY --link --from=pkg-linux-firmware /usr/lib/firmware/intel/iwlwifi/iwlwifi-Qu*-hr-b0-*.ucode /rootfs/usr/lib/firmware/
 COPY --link --from=pkg-linux-firmware /usr/lib/firmware/intel/iwlwifi/iwlwifi-Qu*-hr-b0-*.ucode /rootfs/usr/lib/firmware/intel/iwlwifi/
+COPY --link --from=pkg-linux-firmware /usr/lib/firmware/intel/iwlwifi/iwlwifi-Qu*-jf-b0-*.ucode /rootfs/usr/lib/firmware/
+COPY --link --from=pkg-linux-firmware /usr/lib/firmware/intel/iwlwifi/iwlwifi-Qu*-jf-b0-*.ucode /rootfs/usr/lib/firmware/intel/iwlwifi/
+COPY --link --from=pkg-linux-firmware /usr/lib/firmware/intel/iwlwifi/iwlwifi-9000-pu-b0-jf-b0-*.ucode /rootfs/usr/lib/firmware/
+COPY --link --from=pkg-linux-firmware /usr/lib/firmware/intel/iwlwifi/iwlwifi-9000-pu-b0-jf-b0-*.ucode /rootfs/usr/lib/firmware/intel/iwlwifi/
 COPY --link --from=pkg-util-linux-amd64 /usr/lib/libblkid.* /rootfs/usr/lib/
 COPY --link --from=pkg-util-linux-amd64 /usr/lib/libuuid.* /rootfs/usr/lib/
 COPY --link --from=pkg-util-linux-amd64 /usr/lib/libmount.* /rootfs/usr/lib/
