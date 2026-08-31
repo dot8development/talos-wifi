@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"github.com/cosi-project/runtime/pkg/controller"
+	"github.com/cosi-project/runtime/pkg/resource"
 	"github.com/cosi-project/runtime/pkg/safe"
 	"github.com/cosi-project/runtime/pkg/state"
 	"github.com/siderolabs/gen/optional"
@@ -18,7 +19,28 @@ import (
 	configtypes "github.com/siderolabs/talos/pkg/machinery/config/config"
 	"github.com/siderolabs/talos/pkg/machinery/resources/config"
 	"github.com/siderolabs/talos/pkg/machinery/resources/network"
+	runtimeres "github.com/siderolabs/talos/pkg/machinery/resources/runtime"
 )
+
+// wifiKernelModules is the set of kernel modules loaded whenever at least one
+// NetworkWifiConfig document is present in the machine configuration.
+//
+// Talos kernels are built with CONFIG_MODPROBE_PATH="" (no modprobe usermode helper),
+// so in-kernel request_module() calls are silently dropped: udevd loads the device
+// driver (e.g. iwlwifi) from the PCI modalias, but the driver's own request for its
+// op-mode module (iwlmvm) never succeeds, and the wlan interface never appears.
+// Loading the full wireless module set explicitly makes WiFi work from a
+// NetworkWifiConfig document alone, without requiring a KernelModuleConfig document.
+//
+// Module dependencies (modules.dep) are resolved by the kmod loader, and loading an
+// already-loaded or builtin module is a no-op, so listing the full set is safe on any
+// hardware.
+var wifiKernelModules = []string{
+	"cfg80211", // wireless configuration API (provides nl80211)
+	"mac80211", // software MAC layer (softmac drivers)
+	"iwlwifi",  // Intel wireless core driver
+	"iwlmvm",   // Intel op-mode module, requested by iwlwifi via request_module (disabled by CONFIG_MODPROBE_PATH="")
+}
 
 // WifiConfigController manages network.WifiSpec based on machine configuration.
 type WifiConfigController struct{}
@@ -47,6 +69,10 @@ func (ctrl *WifiConfigController) Outputs() []controller.Output {
 			Type: network.WifiSpecType,
 			Kind: controller.OutputShared,
 		},
+		{
+			Type: runtimeres.KernelModuleSpecType,
+			Kind: controller.OutputShared,
+		},
 	}
 }
 
@@ -72,8 +98,11 @@ func (ctrl *WifiConfigController) Run(ctx context.Context, r controller.Runtime,
 			}
 		}
 
-		if err = safe.CleanupOutputs[*network.WifiSpec](ctx, r); err != nil {
-			return fmt.Errorf("error cleaning up WifiSpec: %w", err)
+		if err = r.CleanupOutputs(ctx,
+			resource.NewMetadata(network.NamespaceName, network.WifiSpecType, "", resource.VersionUndefined),
+			resource.NewMetadata(runtimeres.NamespaceName, runtimeres.KernelModuleSpecType, "", resource.VersionUndefined),
+		); err != nil {
+			return fmt.Errorf("error cleaning up outputs: %w", err)
 		}
 	}
 }
@@ -93,6 +122,28 @@ func (ctrl *WifiConfigController) apply(ctx context.Context, r controller.Runtim
 			return nil
 		}); err != nil {
 			return fmt.Errorf("error writing WifiSpec: %w", err)
+		}
+	}
+
+	if len(configs) > 0 {
+		// Talos kernels can't autoload the wireless module stack (see wifiKernelModules),
+		// so request it explicitly whenever any wifi configuration is present.
+		//
+		// The IDs are prefixed with the "wifi" layer to avoid ownership conflicts with
+		// runtime.KernelModuleConfigController, which owns the IDs matching module names
+		// from KernelModuleConfig documents; runtime.KernelModuleSpecController loads
+		// modules by spec.Name, and loading the same module twice is a no-op.
+		for _, module := range wifiKernelModules {
+			if err := safe.WriterModify(ctx, r,
+				runtimeres.NewKernelModuleSpec(runtimeres.NamespaceName, "wifi/"+module),
+				func(spec *runtimeres.KernelModuleSpec) error {
+					spec.TypedSpec().Name = module
+
+					return nil
+				},
+			); err != nil {
+				return fmt.Errorf("error writing KernelModuleSpec: %w", err)
+			}
 		}
 	}
 
