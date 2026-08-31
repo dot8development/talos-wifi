@@ -17,6 +17,7 @@ import (
 	"github.com/siderolabs/talos/internal/app/machined/pkg/system/runner"
 	"github.com/siderolabs/talos/internal/app/machined/pkg/system/runner/process"
 	"github.com/siderolabs/talos/internal/app/machined/pkg/system/runner/restart"
+	"github.com/siderolabs/talos/internal/pkg/capability"
 	"github.com/siderolabs/talos/pkg/conditions"
 	"github.com/siderolabs/talos/pkg/machinery/constants"
 )
@@ -110,12 +111,19 @@ func (svc *WpaSupplicant) Runner(r runtime.Runtime) (runner.Runner, error) {
 		debug = r.Config().Debug()
 	}
 
+	// drop all capabilities except those required to drive the wireless interface
+	droppedCapabilities := capability.AllCapabilitiesSetLowercase()
+	delete(droppedCapabilities, "cap_net_admin")
+	delete(droppedCapabilities, "cap_net_raw")
+
 	return restart.New(
 		process.NewRunner(
 			debug,
 			args,
 			runner.WithLoggingManager(r.Logging()),
 			runner.WithCgroupPath(constants.CgroupWpaSupplicant),
+			runner.WithSelinuxLabel(constants.SelinuxLabelWpaSupplicant),
+			runner.WithDroppedCapabilities(droppedCapabilities),
 		),
 		restart.WithType(restart.Forever),
 	), nil

@@ -898,6 +898,9 @@ const (
 	// WpaSupplicantRunDir is the directory for wpa_supplicant configuration and control sockets.
 	WpaSupplicantRunDir = "/run/wpa_supplicant"
 
+	// SelinuxLabelWpaSupplicant is the SELinux label for wpa_supplicant runtime processes.
+	SelinuxLabelWpaSupplicant = "system_u:system_r:wpa_supplicant_t:s0"
+
 	// WpaSupplicantExtensionExecutablePath is the path to the wpa_supplicant binary shipped by the wifi system extension.
 	WpaSupplicantExtensionExecutablePath = "/usr/local/bin/wpa_supplicant"
 
