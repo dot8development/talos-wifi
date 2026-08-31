@@ -273,6 +273,21 @@ func (container *Container) validateContainer(mode validation.RuntimeMode) error
 		}
 	}
 
+	// The wireless regulatory domain is global to the kernel, so all WifiConfig documents must agree
+	// on the country code. A per-document Validate() cannot see the other documents, so this is a
+	// container-level check.
+	var wifiCountryCode string
+
+	for _, wifiConfig := range container.NetworkWifiConfigs() {
+		switch countryCode := wifiConfig.CountryCode(); {
+		case countryCode == "":
+		case wifiCountryCode == "":
+			wifiCountryCode = countryCode
+		case countryCode != wifiCountryCode:
+			errs = multierror.Append(errs, fmt.Errorf("all WifiConfig documents must use the same country code: %q vs. %q", wifiCountryCode, countryCode))
+		}
+	}
+
 	// machine type specific checks
 	var machineType machine.Type
 

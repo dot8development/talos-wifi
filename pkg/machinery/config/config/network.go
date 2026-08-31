@@ -101,6 +101,20 @@ type EthernetChannelsConfig struct {
 	Combined *uint32
 }
 
+// NetworkWifiConfig defines a Wi-Fi (wireless) network interface configuration.
+type NetworkWifiConfig interface {
+	NamedDocument
+	CountryCode() string
+	Networks() []WifiNetwork
+}
+
+// WifiNetwork defines a single Wi-Fi network configuration.
+type WifiNetwork interface {
+	SSID() string
+	PSK() string
+	Hidden() bool
+}
+
 // NetworkStaticHostConfig defines a static host configuration.
 type NetworkStaticHostConfig interface {
 	IP() string

@@ -299,6 +299,17 @@ func TestValidateContainer(t *testing.T) {
 
 	apiServerCAConfig := k8s.NewKubeAPIServerCAConfigV1Alpha1()
 
+	wifiConfigNL := network.NewWifiConfigV1Alpha1("wlan0")
+	wifiConfigNL.WifiCountryCode = "NL"
+	wifiConfigNL.WifiNetworks = []network.WifiNetworkConfig{{WifiSSID: "HomeNetwork"}}
+
+	wifiConfigDE := network.NewWifiConfigV1Alpha1("wlan1")
+	wifiConfigDE.WifiCountryCode = "DE"
+	wifiConfigDE.WifiNetworks = []network.WifiNetworkConfig{{WifiSSID: "OtherNetwork"}}
+
+	wifiConfigNoCountry := network.NewWifiConfigV1Alpha1("wlan2")
+	wifiConfigNoCountry.WifiNetworks = []network.WifiNetworkConfig{{WifiSSID: "ThirdNetwork"}}
+
 	for _, tt := range []struct {
 		name        string
 		documents   []config.Document
@@ -392,6 +403,16 @@ func TestValidateContainer(t *testing.T) {
 			documents: []config.Document{v1alpha1CfgControlplane, apiServerCAConfig},
 
 			expectedError: "1 error occurred:\n\t* etcd encryption config is required for control plane machines running kube-apiserver\n\n",
+		},
+		{
+			name:      "wifi documents with conflicting country codes",
+			documents: []config.Document{wifiConfigNL, wifiConfigDE},
+
+			expectedError: "1 error occurred:\n\t* all WifiConfig documents must use the same country code: \"NL\" vs. \"DE\"\n\n",
+		},
+		{
+			name:      "wifi documents with agreeing country codes",
+			documents: []config.Document{wifiConfigNL, wifiConfigNoCountry},
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

@@ -790,6 +790,34 @@ message VethSpec {
   string peer_name = 1;
 }
 
+// WifiNetwork describes a single WiFi network to connect to.
+message WifiNetwork {
+  string ssid = 1;
+  string psk = 2;
+  bool hidden = 3;
+}
+
+// WifiSpecSpec describes WiFi configuration of a wireless link.
+message WifiSpecSpec {
+  string country_code = 1;
+  repeated WifiNetwork networks = 2;
+}
+
+// WifiStatusSpec describes WiFi association status of a wireless link.
+message WifiStatusSpec {
+  string ssid = 1;
+  // formatted MAC
+  string bssid = 2;
+  // authenticated|associated|IBSS-joined (nl80211 BSS status)
+  string status = 3;
+  uint32 frequency_m_hz = 4;
+  // averaged station signal
+  int32 signal_dbm = 5;
+  double rx_bitrate_mbps = 6;
+  double tx_bitrate_mbps = 7;
+  string phy_name = 8;
+}
+
 // WireguardPeer describes a single peer.
 message WireguardPeer {
   string public_key = 1;

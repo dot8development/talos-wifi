@@ -646,6 +646,9 @@ description: Talos gRPC API reference.
     - [VRFMasterSpec](#talos.resource.definitions.network.VRFMasterSpec)
     - [VRFSlave](#talos.resource.definitions.network.VRFSlave)
     - [VethSpec](#talos.resource.definitions.network.VethSpec)
+    - [WifiNetwork](#talos.resource.definitions.network.WifiNetwork)
+    - [WifiSpecSpec](#talos.resource.definitions.network.WifiSpecSpec)
+    - [WifiStatusSpec](#talos.resource.definitions.network.WifiStatusSpec)
     - [WireguardPeer](#talos.resource.definitions.network.WireguardPeer)
     - [WireguardSpec](#talos.resource.definitions.network.WireguardSpec)
   
@@ -11375,6 +11378,61 @@ VethSpec identifies the expected peer of a veth endpoint.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | peer_name | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="talos.resource.definitions.network.WifiNetwork"></a>
+
+### WifiNetwork
+WifiNetwork describes a single WiFi network to connect to.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| ssid | [string](#string) |  |  |
+| psk | [string](#string) |  |  |
+| hidden | [bool](#bool) |  |  |
+
+
+
+
+
+
+<a name="talos.resource.definitions.network.WifiSpecSpec"></a>
+
+### WifiSpecSpec
+WifiSpecSpec describes WiFi configuration of a wireless link.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| country_code | [string](#string) |  |  |
+| networks | [WifiNetwork](#talos.resource.definitions.network.WifiNetwork) | repeated |  |
+
+
+
+
+
+
+<a name="talos.resource.definitions.network.WifiStatusSpec"></a>
+
+### WifiStatusSpec
+WifiStatusSpec describes WiFi association status of a wireless link.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| ssid | [string](#string) |  |  |
+| bssid | [string](#string) |  | formatted MAC |
+| status | [string](#string) |  | authenticated|associated|IBSS-joined (nl80211 BSS status) |
+| frequency_m_hz | [uint32](#uint32) |  |  |
+| signal_dbm | [int32](#int32) |  | averaged station signal |
+| rx_bitrate_mbps | [double](#double) |  |  |
+| tx_bitrate_mbps | [double](#double) |  |  |
+| phy_name | [string](#string) |  |  |
 
 
 

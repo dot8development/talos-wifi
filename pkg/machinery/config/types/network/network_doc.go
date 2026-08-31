@@ -2464,6 +2464,89 @@ func (VLANConfigV1Alpha1) Doc() *encoder.Doc {
 	return doc
 }
 
+func (WifiConfigV1Alpha1) Doc() *encoder.Doc {
+	doc := &encoder.Doc{
+		Type:        "WifiConfig",
+		Comments:    [3]string{"" /* encoder.HeadComment */, "WifiConfig is a config document to configure a Wi-Fi (wireless) network interface." /* encoder.LineComment */, "" /* encoder.FootComment */},
+		Description: "WifiConfig is a config document to configure a Wi-Fi (wireless) network interface.\nWhen at least one Wi-Fi configuration document is present, Talos loads the generic\nwireless kernel modules (`cfg80211`, `mac80211`) and runs a `wpa_supplicant` instance\nfor each configured interface. Vendor driver modules which the kernel can't autoload\n(e.g. Intel's `iwlmvm` op-mode module) should be loaded with a `KernelModuleConfig`\ndocument, or are handled by the system extension shipping the driver.\nPersonal authentication is supported (WPA2-PSK, WPA3-SAE and mixed-mode access points);\nWPA-Enterprise (802.1X) is not supported.\nUse `talosctl get wifistatuses` to inspect the association status.\n",
+		Fields: []encoder.Doc{
+			{
+				Type:   "Meta",
+				Inline: true,
+			},
+			{
+				Name:        "name",
+				Type:        "string",
+				Note:        "",
+				Description: "Name of the wireless link (interface).",
+				Comments:    [3]string{"" /* encoder.HeadComment */, "Name of the wireless link (interface)." /* encoder.LineComment */, "" /* encoder.FootComment */},
+			},
+			{
+				Name:        "countryCode",
+				Type:        "string",
+				Note:        "",
+				Description: "ISO/IEC 3166-1 alpha2 country code to set the wireless regulatory domain.\n\nThe regulatory domain is global to the node, so all Wi-Fi documents must use\nthe same country code.\n\nIf not set, the regulatory domain is left to the kernel default (world domain),\nwhich might restrict available channels and transmit power.",
+				Comments:    [3]string{"" /* encoder.HeadComment */, "ISO/IEC 3166-1 alpha2 country code to set the wireless regulatory domain." /* encoder.LineComment */, "" /* encoder.FootComment */},
+			},
+			{
+				Name:        "networks",
+				Type:        "[]WifiNetworkConfig",
+				Note:        "",
+				Description: "List of wireless networks to connect to (in order of preference).",
+				Comments:    [3]string{"" /* encoder.HeadComment */, "List of wireless networks to connect to (in order of preference)." /* encoder.LineComment */, "" /* encoder.FootComment */},
+			},
+		},
+	}
+
+	doc.AddExample("", exampleWifiConfigV1Alpha1())
+
+	doc.Fields[1].AddExample("", "wlan0")
+	doc.Fields[2].AddExample("", "NL")
+
+	return doc
+}
+
+func (WifiNetworkConfig) Doc() *encoder.Doc {
+	doc := &encoder.Doc{
+		Type:        "WifiNetworkConfig",
+		Comments:    [3]string{"" /* encoder.HeadComment */, "WifiNetworkConfig describes a single Wi-Fi network." /* encoder.LineComment */, "" /* encoder.FootComment */},
+		Description: "WifiNetworkConfig describes a single Wi-Fi network.",
+		AppearsIn: []encoder.Appearance{
+			{
+				TypeName:  "WifiConfigV1Alpha1",
+				FieldName: "networks",
+			},
+		},
+		Fields: []encoder.Doc{
+			{
+				Name:        "ssid",
+				Type:        "string",
+				Note:        "",
+				Description: "SSID (network name) of the wireless network.",
+				Comments:    [3]string{"" /* encoder.HeadComment */, "SSID (network name) of the wireless network." /* encoder.LineComment */, "" /* encoder.FootComment */},
+			},
+			{
+				Name:        "psk",
+				Type:        "string",
+				Note:        "",
+				Description: "Pre-shared key (passphrase) of the wireless network, 8 to 63 characters.\n\nThe same passphrase is used for both WPA2-PSK and WPA3-SAE, so\nmixed-mode access points are supported transparently.\nRaw 64-character hexadecimal PSKs are not supported.\n\nIf not set, the network is assumed to be open (no authentication).",
+				Comments:    [3]string{"" /* encoder.HeadComment */, "Pre-shared key (passphrase) of the wireless network, 8 to 63 characters." /* encoder.LineComment */, "" /* encoder.FootComment */},
+			},
+			{
+				Name:        "hidden",
+				Type:        "bool",
+				Note:        "",
+				Description: "Set if the network SSID is hidden (not broadcasted).",
+				Comments:    [3]string{"" /* encoder.HeadComment */, "Set if the network SSID is hidden (not broadcasted)." /* encoder.LineComment */, "" /* encoder.FootComment */},
+			},
+		},
+	}
+
+	doc.Fields[0].AddExample("", "HomeNetwork")
+
+	return doc
+}
+
 func (WireguardConfigV1Alpha1) Doc() *encoder.Doc {
 	doc := &encoder.Doc{
 		Type:        "WireguardConfig",
@@ -2629,6 +2712,8 @@ func GetFileDoc() *encoder.FileDoc {
 			VethConfigV1Alpha1{}.Doc(),
 			VethPeerConfig{}.Doc(),
 			VLANConfigV1Alpha1{}.Doc(),
+			WifiConfigV1Alpha1{}.Doc(),
+			WifiNetworkConfig{}.Doc(),
 			WireguardConfigV1Alpha1{}.Doc(),
 			WireguardPeer{}.Doc(),
 		},
