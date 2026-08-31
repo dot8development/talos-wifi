@@ -57,7 +57,7 @@ func (ctrl *WifiStatusController) Run(ctx context.Context, r controller.Runtime,
 		[]controller.Input{
 			{
 				Namespace: network.NamespaceName,
-				Type:      network.LinkSpecType,
+				Type:      network.LinkStatusType,
 				Kind:      controller.InputWeak,
 			},
 		},
@@ -66,21 +66,33 @@ func (ctrl *WifiStatusController) Run(ctx context.Context, r controller.Runtime,
 	}
 
 	// create a watch connection to nl80211 via genetlink to be notified on association changes;
-	// if the nl80211 family is not available (no wireless stack/no wifi extension), skip the controller
-	nl80211Watcher, err := watch.NewNL80211(trigger.NewDefaultRateLimitedTrigger(ctx, r))
-	if err != nil {
-		logger.Debug("nl80211 watcher failed to start", zap.Error(err))
+	// if the nl80211 family is not available (the wireless stack is not loaded yet - no wifi
+	// hardware, or cfg80211 loads later e.g. via the wifi extension or a kernel module spec),
+	// wait for link changes and retry instead of disabling the controller permanently
+	var nl80211Watcher watch.Watcher
 
-		return nil
+	for {
+		var err error
+
+		nl80211Watcher, err = watch.NewNL80211(trigger.NewDefaultRateLimitedTrigger(ctx, r))
+		if err == nil {
+			break
+		}
+
+		logger.Debug("nl80211 watch is not available, waiting for wireless links to appear", zap.Error(err))
+
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-r.EventCh():
+		}
 	}
 
 	defer nl80211Watcher.Done()
 
 	wifiClient, err := wifi.New()
 	if err != nil {
-		logger.Warn("error dialing nl80211 socket", zap.Error(err))
-
-		return nil
+		return fmt.Errorf("error dialing nl80211 socket: %w", err)
 	}
 
 	defer wifiClient.Close() //nolint:errcheck
