@@ -42,6 +42,13 @@ var (
 
 // WifiConfigV1Alpha1 is a config document to configure a WiFi (wireless) network interface.
 //
+//	description: |
+//	  When at least one WiFi configuration document is present, Talos automatically loads
+//	  the wireless kernel module stack and runs a `wpa_supplicant` instance for each
+//	  configured interface, so no extra `KernelModuleConfig` document is required.
+//	  Personal authentication is supported (WPA2-PSK, WPA3-SAE and mixed-mode access points);
+//	  WPA-Enterprise (802.1X) is not supported.
+//	  Use `talosctl get wifistatuses` to inspect the association status.
 //	examples:
 //	  - value: exampleWifiConfigV1Alpha1()
 //	alias: NetworkWifiConfig
@@ -51,13 +58,20 @@ type WifiConfigV1Alpha1 struct {
 	meta.Meta `yaml:",inline"`
 
 	//   description: |
-	//     Name of the wireless link (interface), e.g. `wlan0`.
+	//     Name of the wireless link (interface).
+	//   examples:
+	//     - value: >
+	//        "wlan0"
 	//   schemaRequired: true
 	MetaName string `yaml:"name"`
 	//   description: |
-	//     ISO/IEC 3166-1 alpha2 country code to set the wireless regulatory domain, e.g. `NL`.
+	//     ISO/IEC 3166-1 alpha2 country code to set the wireless regulatory domain.
 	//
-	//     If not set, the regulatory domain is left to the kernel default (world domain).
+	//     If not set, the regulatory domain is left to the kernel default (world domain),
+	//     which might restrict available channels and transmit power.
+	//   examples:
+	//     - value: >
+	//        "NL"
 	WifiCountryCode string `yaml:"countryCode,omitempty"`
 	//   description: |
 	//     List of wireless networks to connect to (in order of preference).
@@ -69,10 +83,16 @@ type WifiConfigV1Alpha1 struct {
 type WifiNetworkConfig struct {
 	//   description: |
 	//     SSID (network name) of the wireless network.
+	//   examples:
+	//     - value: >
+	//        "HomeNetwork"
 	//   schemaRequired: true
 	WifiSSID string `yaml:"ssid"`
 	//   description: |
-	//     Pre-shared key (passphrase) of the wireless network (WPA2-PSK/WPA3-SAE).
+	//     Pre-shared key (passphrase) of the wireless network, 8 to 63 characters.
+	//
+	//     The same passphrase is used for both WPA2-PSK and WPA3-SAE, so
+	//     mixed-mode access points are supported transparently.
 	//
 	//     If not set, the network is assumed to be open (no authentication).
 	WifiPSK string `yaml:"psk,omitempty"`

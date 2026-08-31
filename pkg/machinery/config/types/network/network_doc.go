@@ -2468,7 +2468,7 @@ func (WifiConfigV1Alpha1) Doc() *encoder.Doc {
 	doc := &encoder.Doc{
 		Type:        "NetworkWifiConfig",
 		Comments:    [3]string{"" /* encoder.HeadComment */, "NetworkWifiConfig is a config document to configure a WiFi (wireless) network interface." /* encoder.LineComment */, "" /* encoder.FootComment */},
-		Description: "NetworkWifiConfig is a config document to configure a WiFi (wireless) network interface.",
+		Description: "NetworkWifiConfig is a config document to configure a WiFi (wireless) network interface.\nWhen at least one WiFi configuration document is present, Talos automatically loads\nthe wireless kernel module stack and runs a `wpa_supplicant` instance for each\nconfigured interface, so no extra `KernelModuleConfig` document is required.\nPersonal authentication is supported (WPA2-PSK, WPA3-SAE and mixed-mode access points);\nWPA-Enterprise (802.1X) is not supported.\nUse `talosctl get wifistatuses` to inspect the association status.\n",
 		Fields: []encoder.Doc{
 			{
 				Type:   "Meta",
@@ -2478,15 +2478,15 @@ func (WifiConfigV1Alpha1) Doc() *encoder.Doc {
 				Name:        "name",
 				Type:        "string",
 				Note:        "",
-				Description: "Name of the wireless link (interface), e.g. `wlan0`.",
-				Comments:    [3]string{"" /* encoder.HeadComment */, "Name of the wireless link (interface), e.g. `wlan0`." /* encoder.LineComment */, "" /* encoder.FootComment */},
+				Description: "Name of the wireless link (interface).",
+				Comments:    [3]string{"" /* encoder.HeadComment */, "Name of the wireless link (interface)." /* encoder.LineComment */, "" /* encoder.FootComment */},
 			},
 			{
 				Name:        "countryCode",
 				Type:        "string",
 				Note:        "",
-				Description: "ISO/IEC 3166-1 alpha2 country code to set the wireless regulatory domain, e.g. `NL`.\n\nIf not set, the regulatory domain is left to the kernel default (world domain).",
-				Comments:    [3]string{"" /* encoder.HeadComment */, "ISO/IEC 3166-1 alpha2 country code to set the wireless regulatory domain, e.g. `NL`." /* encoder.LineComment */, "" /* encoder.FootComment */},
+				Description: "ISO/IEC 3166-1 alpha2 country code to set the wireless regulatory domain.\n\nIf not set, the regulatory domain is left to the kernel default (world domain),\nwhich might restrict available channels and transmit power.",
+				Comments:    [3]string{"" /* encoder.HeadComment */, "ISO/IEC 3166-1 alpha2 country code to set the wireless regulatory domain." /* encoder.LineComment */, "" /* encoder.FootComment */},
 			},
 			{
 				Name:        "networks",
@@ -2499,6 +2499,9 @@ func (WifiConfigV1Alpha1) Doc() *encoder.Doc {
 	}
 
 	doc.AddExample("", exampleWifiConfigV1Alpha1())
+
+	doc.Fields[1].AddExample("", "wlan0")
+	doc.Fields[2].AddExample("", "NL")
 
 	return doc
 }
@@ -2526,8 +2529,8 @@ func (WifiNetworkConfig) Doc() *encoder.Doc {
 				Name:        "psk",
 				Type:        "string",
 				Note:        "",
-				Description: "Pre-shared key (passphrase) of the wireless network (WPA2-PSK/WPA3-SAE).\n\nIf not set, the network is assumed to be open (no authentication).",
-				Comments:    [3]string{"" /* encoder.HeadComment */, "Pre-shared key (passphrase) of the wireless network (WPA2-PSK/WPA3-SAE)." /* encoder.LineComment */, "" /* encoder.FootComment */},
+				Description: "Pre-shared key (passphrase) of the wireless network, 8 to 63 characters.\n\nThe same passphrase is used for both WPA2-PSK and WPA3-SAE, so\nmixed-mode access points are supported transparently.\n\nIf not set, the network is assumed to be open (no authentication).",
+				Comments:    [3]string{"" /* encoder.HeadComment */, "Pre-shared key (passphrase) of the wireless network, 8 to 63 characters." /* encoder.LineComment */, "" /* encoder.FootComment */},
 			},
 			{
 				Name:        "hidden",
@@ -2538,6 +2541,8 @@ func (WifiNetworkConfig) Doc() *encoder.Doc {
 			},
 		},
 	}
+
+	doc.Fields[0].AddExample("", "HomeNetwork")
 
 	return doc
 }
