@@ -9,16 +9,17 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/cosi-project/runtime/pkg/controller"
 	"github.com/cosi-project/runtime/pkg/safe"
+	"github.com/cosi-project/runtime/pkg/state"
 	"go.uber.org/zap"
 
 	"github.com/siderolabs/talos/internal/app/machined/pkg/system"
 	"github.com/siderolabs/talos/internal/app/machined/pkg/system/services"
 	"github.com/siderolabs/talos/pkg/machinery/constants"
-	"github.com/siderolabs/talos/pkg/machinery/nethelpers"
 	"github.com/siderolabs/talos/pkg/machinery/resources/network"
 )
 
@@ -35,8 +36,21 @@ type WifiServiceManager interface {
 type WifiServiceController struct {
 	V1Alpha1Services WifiServiceManager
 
+	// RunDir is the directory for generated wpa_supplicant configuration files.
+	//
+	// If empty, constants.WifiSupplicantRunDir is used; it is a field to allow stubbing in tests.
+	RunDir string
+
+	// SupplicantPathFunc resolves the wpa_supplicant executable.
+	//
+	// If nil, services.WpaSupplicantExecutablePath is used; it is a field to allow stubbing in tests.
+	SupplicantPathFunc func() (string, error)
+
 	// map of link name -> rendered wpa_supplicant configuration for running supplicants
 	running map[string]string
+
+	// last logged set of skipped links (to avoid re-logging the same state on every reconcile)
+	lastSkipped string
 }
 
 // Name implements controller.Controller interface.
@@ -100,16 +114,25 @@ func (ctrl *WifiServiceController) reconcile(ctx context.Context, r controller.R
 	// desired set of supplicants: WifiSpecs whose link exists as a physical ethernet-like link
 	desired := map[string]string{}
 
+	var absent, nonPhysical []string
+
 	for spec := range specs.All() {
 		linkName := spec.Metadata().ID()
 
 		linkStatus, err := safe.ReaderGetByID[*network.LinkStatus](ctx, r, linkName)
 		if err != nil {
-			continue // link is not (yet) present, skip
+			if !state.IsNotFoundError(err) {
+				return fmt.Errorf("error getting LinkStatus for %q: %w", linkName, err)
+			}
+
+			// link is not (yet) present, skip
+			absent = append(absent, linkName)
+
+			continue
 		}
 
-		if linkStatus.TypedSpec().Type != nethelpers.LinkEther || linkStatus.TypedSpec().Kind != "" {
-			logger.Warn("skipping wifi config for non-physical link", zap.String("link", linkName))
+		if !linkStatus.TypedSpec().Physical() {
+			nonPhysical = append(nonPhysical, linkName)
 
 			continue
 		}
@@ -117,11 +140,32 @@ func (ctrl *WifiServiceController) reconcile(ctx context.Context, r controller.R
 		desired[linkName] = renderWpaSupplicantConfig(spec.TypedSpec())
 	}
 
+	// log skipped links only when the skipped set changes to avoid log spam on every reconcile
+	if summary := fmt.Sprintf("absent: %v, non-physical: %v", absent, nonPhysical); summary != ctrl.lastSkipped {
+		ctrl.lastSkipped = summary
+
+		if len(absent) > 0 {
+			logger.Debug("skipping wifi configuration for links which are not present",
+				zap.Strings("links", absent),
+				zap.Strings("wireless_capable_links", wirelessCapableLinks(ctx, r)),
+			)
+		}
+
+		if len(nonPhysical) > 0 {
+			logger.Warn("skipping wifi configuration for non-physical links", zap.Strings("links", nonPhysical))
+		}
+	}
+
 	// gate on the wpa_supplicant binary being available: it is either baked into the base
 	// image or shipped by the wifi system extension; if it is missing, log a clear error
 	// instead of crash-looping the supplicant services
 	if len(desired) > 0 {
-		if _, err := services.WpaSupplicantExecutablePath(); err != nil {
+		supplicantPathFunc := ctrl.SupplicantPathFunc
+		if supplicantPathFunc == nil {
+			supplicantPathFunc = services.WpaSupplicantExecutablePath
+		}
+
+		if _, err := supplicantPathFunc(); err != nil {
 			logger.Error("wifi configuration is present, but wpa_supplicant is not available; install the wifi system extension",
 				zap.Error(err))
 
@@ -145,7 +189,7 @@ func (ctrl *WifiServiceController) reconcile(ctx context.Context, r controller.R
 			return fmt.Errorf("error unloading service %q: %w", serviceID, err)
 		}
 
-		if err := os.Remove(services.WpaSupplicantConfigPath(linkName)); err != nil && !os.IsNotExist(err) {
+		if err := os.Remove(ctrl.configPath(linkName)); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("error removing wpa_supplicant config for %q: %w", linkName, err)
 		}
 
@@ -160,11 +204,11 @@ func (ctrl *WifiServiceController) reconcile(ctx context.Context, r controller.R
 			continue
 		}
 
-		if err := os.MkdirAll(constants.WifiSupplicantRunDir, 0o700); err != nil {
+		if err := os.MkdirAll(ctrl.runDir(), 0o700); err != nil {
 			return fmt.Errorf("error creating wpa_supplicant run directory: %w", err)
 		}
 
-		if err := os.WriteFile(services.WpaSupplicantConfigPath(linkName), []byte(conf), 0o600); err != nil {
+		if err := os.WriteFile(ctrl.configPath(linkName), []byte(conf), 0o600); err != nil {
 			return fmt.Errorf("error writing wpa_supplicant config for %q: %w", linkName, err)
 		}
 
@@ -190,6 +234,48 @@ func (ctrl *WifiServiceController) reconcile(ctx context.Context, r controller.R
 	}
 
 	return nil
+}
+
+// runDir returns the directory for generated wpa_supplicant configuration files.
+func (ctrl *WifiServiceController) runDir() string {
+	if ctrl.RunDir != "" {
+		return ctrl.RunDir
+	}
+
+	return constants.WifiSupplicantRunDir
+}
+
+// configPath returns the wpa_supplicant configuration file path for the given wireless link.
+//
+// With the default RunDir it matches services.WpaSupplicantConfigPath, which the
+// wpa-supplicant service waits for before starting the supplicant.
+func (ctrl *WifiServiceController) configPath(linkName string) string {
+	return filepath.Join(ctrl.runDir(), linkName+".conf")
+}
+
+// wirelessCapableLinks returns the names of physical links which are wireless-capable
+// (i.e. registered with cfg80211), based on the sysfs phy80211 link.
+//
+// It is used for logging only, so errors are ignored.
+func wirelessCapableLinks(ctx context.Context, r controller.Runtime) []string {
+	statuses, err := safe.ReaderListAll[*network.LinkStatus](ctx, r)
+	if err != nil {
+		return nil
+	}
+
+	var links []string
+
+	for status := range statuses.All() {
+		if !status.TypedSpec().Physical() {
+			continue
+		}
+
+		if _, err := os.Stat(filepath.Join("/sys/class/net", status.Metadata().ID(), "phy80211")); err == nil {
+			links = append(links, status.Metadata().ID())
+		}
+	}
+
+	return links
 }
 
 // renderWpaSupplicantConfig renders a wpa_supplicant configuration file from the WifiSpec.
