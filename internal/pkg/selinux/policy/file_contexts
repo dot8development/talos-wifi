@@ -10,6 +10,7 @@
 /opt/containerd(/.*)?	system_u:object_r:containerd_plugin_t:s0
 /usr/lib/modules(/.*)?	system_u:object_r:module_t:s0
 /usr/lib/udev/hwdb[.]bin	--	system_u:object_r:udev_hwdb_t:s0
+/run/wpa_supplicant(/.*)?	system_u:object_r:wpa_supplicant_run_t:s0
 /usr/share/zoneinfo(/.*)?	system_u:object_r:etc_t:s0
 /usr/lib/udev/rules.d(/.*)?	system_u:object_r:udev_rules_t:s0
 /usr/local/lib/kubelet/credentialproviders(/.*)?	system_u:object_r:k8s_credentialproviders_t:s0
@@ -27,4 +28,6 @@
 /usr/bin/modprobe	--	system_u:object_r:modprobe_exec_t:s0
 /usr/bin/containerd	system_u:object_r:containerd_exec_t:s0
 /usr/bin/systemd-udevd	--	system_u:object_r:udev_exec_t:s0
+/usr/bin/wpa_supplicant	--	system_u:object_r:wpa_supplicant_exec_t:s0
+/usr/local/bin/wpa_supplicant	--	system_u:object_r:wpa_supplicant_exec_t:s0
 /usr/bin/containerd-shim-runc-v2	system_u:object_r:containerd_exec_t:s0
