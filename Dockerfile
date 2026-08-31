@@ -66,6 +66,7 @@ ARG PKG_SYSTEMD_UDEVD=scratch
 ARG PKG_TALOSCTL_CNI_BUNDLE=scratch
 ARG PKG_TAR=scratch
 ARG PKG_UTIL_LINUX=scratch
+ARG PKG_WIRELESS_REGDB=scratch
 ARG PKG_WPA_SUPPLICANT=scratch
 ARG PKG_XFSPROGS=scratch
 ARG PKG_XZ=scratch
@@ -161,6 +162,9 @@ FROM --platform=arm64 ${PKG_OPENSSL} AS pkg-openssl-arm64
 
 # linux-firmware is not arch-specific
 FROM --platform=amd64 ${PKG_LINUX_FIRMWARE} AS pkg-linux-firmware
+
+# wireless-regdb is not arch-specific
+FROM --platform=amd64 ${PKG_WIRELESS_REGDB} AS pkg-wireless-regdb
 
 FROM --platform=amd64 ${PKG_LVM2} AS pkg-lvm2-amd64
 FROM --platform=arm64 ${PKG_LVM2} AS pkg-lvm2-arm64
@@ -796,8 +800,11 @@ COPY --link --from=pkg-nftables-amd64 / /rootfs
 COPY --link --from=pkg-runc-amd64 / /rootfs
 COPY --link --from=pkg-xfsprogs-amd64 / /rootfs
 COPY --link --from=pkg-wpa-supplicant-amd64 / /rootfs
-COPY --link --from=pkg-linux-firmware /usr/lib/firmware/regulatory.db /usr/lib/firmware/regulatory.db.p7s /rootfs/usr/lib/firmware/
-COPY --link --from=pkg-linux-firmware /usr/lib/firmware/iwlwifi-Qu*.ucode /rootfs/usr/lib/firmware/
+COPY --link --from=pkg-wireless-regdb /usr/lib/firmware/regulatory.db /usr/lib/firmware/regulatory.db.p7s /rootfs/usr/lib/firmware/
+# the iwlwifi driver requests firmware both with and without the intel/iwlwifi/ prefix
+# depending on the kernel version, so provide both layouts
+COPY --link --from=pkg-linux-firmware /usr/lib/firmware/intel/iwlwifi/iwlwifi-Qu*-hr-b0-*.ucode /rootfs/usr/lib/firmware/
+COPY --link --from=pkg-linux-firmware /usr/lib/firmware/intel/iwlwifi/iwlwifi-Qu*-hr-b0-*.ucode /rootfs/usr/lib/firmware/intel/iwlwifi/
 COPY --link --from=pkg-util-linux-amd64 /usr/lib/libblkid.* /rootfs/usr/lib/
 COPY --link --from=pkg-util-linux-amd64 /usr/lib/libuuid.* /rootfs/usr/lib/
 COPY --link --from=pkg-util-linux-amd64 /usr/lib/libmount.* /rootfs/usr/lib/
