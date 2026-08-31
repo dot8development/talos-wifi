@@ -809,6 +809,10 @@ COPY --link --from=pkg-wireless-regdb /usr/lib/firmware/regulatory.db /usr/lib/f
 # depending on the kernel version, so provide both layouts
 COPY --link --from=pkg-linux-firmware /usr/lib/firmware/intel/iwlwifi/iwlwifi-Qu*-hr-b0-*.ucode /rootfs/usr/lib/firmware/
 COPY --link --from=pkg-linux-firmware /usr/lib/firmware/intel/iwlwifi/iwlwifi-Qu*-hr-b0-*.ucode /rootfs/usr/lib/firmware/intel/iwlwifi/
+COPY --link --from=pkg-linux-firmware /usr/lib/firmware/intel/iwlwifi/iwlwifi-Qu*-jf-b0-*.ucode /rootfs/usr/lib/firmware/
+COPY --link --from=pkg-linux-firmware /usr/lib/firmware/intel/iwlwifi/iwlwifi-Qu*-jf-b0-*.ucode /rootfs/usr/lib/firmware/intel/iwlwifi/
+COPY --link --from=pkg-linux-firmware /usr/lib/firmware/intel/iwlwifi/iwlwifi-9000-pu-b0-jf-b0-*.ucode /rootfs/usr/lib/firmware/
+COPY --link --from=pkg-linux-firmware /usr/lib/firmware/intel/iwlwifi/iwlwifi-9000-pu-b0-jf-b0-*.ucode /rootfs/usr/lib/firmware/intel/iwlwifi/
 COPY --link --from=pkg-util-linux-amd64 /usr/share/spdx/util-linux.spdx.json /rootfs/usr/share/spdx/util-linux.spdx.json
 COPY --link --from=pkg-kmod-amd64 /usr/lib/ /rootfs/usr/lib/
 COPY --link --from=pkg-kmod-amd64 /usr/bin/kmod /rootfs/usr/bin/modprobe
