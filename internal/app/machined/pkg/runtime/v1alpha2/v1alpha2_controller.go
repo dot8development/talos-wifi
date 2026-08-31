@@ -463,6 +463,7 @@ func (ctrl *Controller) Run(ctx context.Context, drainer *runtime.Drainer) error
 		&network.WifiServiceController{
 			V1Alpha1Services: system.Services(ctrl.v1alpha1Runtime),
 		},
+		&network.WifiStatusController{},
 		&perf.StatsController{},
 		&runtimecontrollers.APIServiceConfigController{},
 		&runtimecontrollers.BootedEntryController{

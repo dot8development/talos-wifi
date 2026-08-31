@@ -1,0 +1,51 @@
+; wpa_supplicant WiFi authentication daemon, one instance per wireless link.
+; Spawned by machined (init_t) via the process runner.
+
+(type wpa_supplicant_exec_t)
+(call system_f (wpa_supplicant_exec_t))
+; the binary is either baked into the base image (/usr/bin) or shipped by the
+; wifi system extension (/usr/local/bin); label both locations
+(filecon "/usr/bin/wpa_supplicant" file (system_u object_r wpa_supplicant_exec_t (systemLow systemLow)))
+(filecon "/usr/local/bin/wpa_supplicant" file (system_u object_r wpa_supplicant_exec_t (systemLow systemLow)))
+
+(type wpa_supplicant_t)
+(call service_p (wpa_supplicant_t wpa_supplicant_exec_t))
+; service_p gives: entrypoint/execute on exec type, init_t manage + nosuid_transition (processes.cil)
+(typetransition init_t wpa_supplicant_exec_t process wpa_supplicant_t)
+(allow init_t wpa_supplicant_exec_t (file (execute)))
+
+; --- runtime dir: /run/wpa_supplicant (configs written by machined, ctrl sockets by the daemon)
+(type wpa_supplicant_run_t)
+(call system_f (wpa_supplicant_run_t))
+(allow wpa_supplicant_run_t tmpfs_t (filesystem (associate)))
+(filecon "/run/wpa_supplicant(/.*)?" any (system_u object_r wpa_supplicant_run_t (systemLow systemLow)))
+; machined creates the dir and per-link .conf before starting the service
+(typetransition init_t run_t dir "wpa_supplicant" wpa_supplicant_run_t)
+(allow init_t wpa_supplicant_run_t (fs_classes (rw)))
+; the daemon writes control sockets and reads its config there
+(typetransition wpa_supplicant_t run_t dir wpa_supplicant_run_t)
+(typetransition wpa_supplicant_t run_t file wpa_supplicant_run_t)
+(typetransition wpa_supplicant_t run_t sock_file wpa_supplicant_run_t)
+(allow wpa_supplicant_t run_t (dir (search)))
+(allow wpa_supplicant_t wpa_supplicant_run_t (fs_classes (rw)))
+(allow wpa_supplicant_t wpa_supplicant_run_t (sock_file (create unlink)))
+
+; --- netlink: nl80211 (generic) for driver control, route for link state
+; (any_p already has netlink_classes full via common/network.cil; kept explicit for documentation
+;  and to survive future tightening of the any_p rule)
+(allow wpa_supplicant_t self (netlink_generic_socket (bind create getattr getopt read setopt write)))
+(allow wpa_supplicant_t self (netlink_route_socket (bind create getattr nlmsg_read read write)))
+(allow wpa_supplicant_t self (udp_socket (create ioctl)))          ; SIOCGIFINDEX et al.
+(allow wpa_supplicant_t self (packet_socket (bind create read write))) ; EAPOL frames (l2_packet)
+(allow wpa_supplicant_t self (capability (net_admin net_raw)))
+
+; --- rfkill: check/unblock radio kill switches
+(type rfkill_device_t)
+(call protected_device_f (rfkill_device_t))
+(allow wpa_supplicant_t rfkill_device_t (fs_classes (rw)))
+; udevd labels /dev/rfkill (90-selinux.rules); udev_t relabel rights come from udev.cil
+
+; --- misc: entropy, config read is on wpa_supplicant_run_t already; sysfs for phy enumeration
+(allow wpa_supplicant_t sysfs_t (fs_classes (ro)))
+
+; machined health-check stats the control socket (covered by any_p getattr in processes.cil)
