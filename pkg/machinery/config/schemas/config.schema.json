@@ -6221,6 +6221,92 @@
       ],
       "description": "VethPeerConfig is the configuration for the peer end of a veth pair."
     },
+    "network.WifiConfigV1Alpha1": {
+      "properties": {
+        "apiVersion": {
+          "enum": [
+            "v1alpha1"
+          ],
+          "title": "apiVersion",
+          "description": "apiVersion is the API version of the resource.\n",
+          "markdownDescription": "apiVersion is the API version of the resource.",
+          "x-intellij-html-description": "\u003cp\u003eapiVersion is the API version of the resource.\u003c/p\u003e\n"
+        },
+        "kind": {
+          "enum": [
+            "NetworkWifiConfig"
+          ],
+          "title": "kind",
+          "description": "kind is the kind of the resource.\n",
+          "markdownDescription": "kind is the kind of the resource.",
+          "x-intellij-html-description": "\u003cp\u003ekind is the kind of the resource.\u003c/p\u003e\n"
+        },
+        "name": {
+          "type": "string",
+          "title": "name",
+          "description": "Name of the wireless link (interface).\n",
+          "markdownDescription": "Name of the wireless link (interface).",
+          "x-intellij-html-description": "\u003cp\u003eName of the wireless link (interface).\u003c/p\u003e\n"
+        },
+        "countryCode": {
+          "type": "string",
+          "title": "countryCode",
+          "description": "ISO/IEC 3166-1 alpha2 country code to set the wireless regulatory domain.\n\nIf not set, the regulatory domain is left to the kernel default (world domain),\nwhich might restrict available channels and transmit power.\n",
+          "markdownDescription": "ISO/IEC 3166-1 alpha2 country code to set the wireless regulatory domain.\n\nIf not set, the regulatory domain is left to the kernel default (world domain),\nwhich might restrict available channels and transmit power.",
+          "x-intellij-html-description": "\u003cp\u003eISO/IEC 3166-1 alpha2 country code to set the wireless regulatory domain.\u003c/p\u003e\n\n\u003cp\u003eIf not set, the regulatory domain is left to the kernel default (world domain),\nwhich might restrict available channels and transmit power.\u003c/p\u003e\n"
+        },
+        "networks": {
+          "items": {
+            "$ref": "#/$defs/network.WifiNetworkConfig"
+          },
+          "type": "array",
+          "title": "networks",
+          "description": "List of wireless networks to connect to (in order of preference).\n",
+          "markdownDescription": "List of wireless networks to connect to (in order of preference).",
+          "x-intellij-html-description": "\u003cp\u003eList of wireless networks to connect to (in order of preference).\u003c/p\u003e\n"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "apiVersion",
+        "kind",
+        "name",
+        "networks"
+      ],
+      "description": "NetworkWifiConfig is a config document to configure a WiFi (wireless) network interface.\\nWhen at least one WiFi configuration document is present, Talos automatically loads\\nthe wireless kernel module stack and runs a `wpa_supplicant` instance for each\\nconfigured interface, so no extra `KernelModuleConfig` document is required.\\nPersonal authentication is supported (WPA2-PSK, WPA3-SAE and mixed-mode access points);\\nWPA-Enterprise (802.1X) is not supported.\\nUse `talosctl get wifistatuses` to inspect the association status.\\n"
+    },
+    "network.WifiNetworkConfig": {
+      "properties": {
+        "ssid": {
+          "type": "string",
+          "title": "ssid",
+          "description": "SSID (network name) of the wireless network.\n",
+          "markdownDescription": "SSID (network name) of the wireless network.",
+          "x-intellij-html-description": "\u003cp\u003eSSID (network name) of the wireless network.\u003c/p\u003e\n"
+        },
+        "psk": {
+          "type": "string",
+          "title": "psk",
+          "description": "Pre-shared key (passphrase) of the wireless network, 8 to 63 characters.\n\nThe same passphrase is used for both WPA2-PSK and WPA3-SAE, so\nmixed-mode access points are supported transparently.\n\nIf not set, the network is assumed to be open (no authentication).\n",
+          "markdownDescription": "Pre-shared key (passphrase) of the wireless network, 8 to 63 characters.\n\nThe same passphrase is used for both WPA2-PSK and WPA3-SAE, so\nmixed-mode access points are supported transparently.\n\nIf not set, the network is assumed to be open (no authentication).",
+          "x-intellij-html-description": "\u003cp\u003ePre-shared key (passphrase) of the wireless network, 8 to 63 characters.\u003c/p\u003e\n\n\u003cp\u003eThe same passphrase is used for both WPA2-PSK and WPA3-SAE, so\nmixed-mode access points are supported transparently.\u003c/p\u003e\n\n\u003cp\u003eIf not set, the network is assumed to be open (no authentication).\u003c/p\u003e\n"
+        },
+        "hidden": {
+          "type": "boolean",
+          "title": "hidden",
+          "description": "Set if the network SSID is hidden (not broadcasted).\n",
+          "markdownDescription": "Set if the network SSID is hidden (not broadcasted).",
+          "x-intellij-html-description": "\u003cp\u003eSet if the network SSID is hidden (not broadcasted).\u003c/p\u003e\n"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "ssid"
+      ],
+      "description": "WifiNetworkConfig describes a single WiFi network."
+    },
     "network.WireguardConfigV1Alpha1": {
       "properties": {
         "apiVersion": {
@@ -7879,6 +7965,9 @@
     },
     {
       "$ref": "#/$defs/network.VRFConfigV1Alpha1"
+    },
+    {
+      "$ref": "#/$defs/network.WifiConfigV1Alpha1"
     },
     {
       "$ref": "#/$defs/network.WireguardConfigV1Alpha1"
