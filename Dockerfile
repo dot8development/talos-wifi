@@ -891,6 +891,9 @@ COPY --link --from=pkg-zlib-arm64 /usr/share/spdx /rootfs/usr/share/spdx
 COPY --link --from=pkg-zlib-arm64 /usr/lib /rootfs/usr/lib
 # NOTE: amd64 ships igzip, but arm64 ships pigz (see https://github.com/siderolabs/extensions/discussions/931)
 COPY --link --from=pkg-pigz-arm64 / /rootfs
+COPY --link --from=pkg-wpa-supplicant-arm64 / /rootfs
+COPY --link --from=pkg-linux-firmware /usr/lib/firmware/regulatory.db /usr/lib/firmware/regulatory.db.p7s /rootfs/usr/lib/firmware/
+COPY --link --from=pkg-linux-firmware /usr/lib/firmware/iwlwifi-Qu*.ucode /rootfs/usr/lib/firmware/
 COPY --link --from=pkg-util-linux-arm64 /usr/lib/libblkid.* /rootfs/usr/lib/
 COPY --link --from=pkg-util-linux-arm64 /usr/lib/libuuid.* /rootfs/usr/lib/
 COPY --link --from=pkg-util-linux-arm64 /usr/lib/libmount.* /rootfs/usr/lib/
