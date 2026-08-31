@@ -25,6 +25,7 @@ var (
 	_ resources.RedactableSpec[RouteSpecSpec]       = RouteSpecSpec{}
 	_ resources.RedactableSpec[RoutingRuleSpecSpec] = RoutingRuleSpecSpec{}
 	_ resources.RedactableSpec[TimeServerSpecSpec]  = TimeServerSpecSpec{}
+	_ resources.RedactableSpec[WifiSpecSpec]        = WifiSpecSpec{}
 )
 
 // RedactSecrets implements resources.RedactableSpec interface.
@@ -105,6 +106,20 @@ func (spec TimeServerSpecSpec) RedactSecrets(resource.Metadata) TimeServerSpecSp
 	return spec
 }
 
+// RedactSecrets implements resources.RedactableSpec interface.
+func (spec WifiSpecSpec) RedactSecrets(resource.Metadata) WifiSpecSpec {
+	if !hasSecretsWifiSpecSpec(&spec) {
+		return spec
+	}
+
+	// the spec might share the backing storage with the resource, so copy before mutating
+	spec = spec.DeepCopy()
+
+	redactWifiSpecSpec(&spec)
+
+	return spec
+}
+
 // hasSecretsLinkSpecSpec checks if LinkSpecSpec carries any sensitive value.
 func hasSecretsLinkSpecSpec(spec *LinkSpecSpec) bool {
 	if hasSecretsWireguardSpec(&spec.Wireguard) {
@@ -145,6 +160,24 @@ func hasSecretsProbeSpecSpec(spec *ProbeSpecSpec) bool {
 // redactProbeSpecSpec redacts sensitive values in ProbeSpecSpec in place.
 func redactProbeSpecSpec(spec *ProbeSpecSpec) {
 	redactHTTPProbeSpec(&spec.HTTP)
+}
+
+// hasSecretsWifiSpecSpec checks if WifiSpecSpec carries any sensitive value.
+func hasSecretsWifiSpecSpec(spec *WifiSpecSpec) bool {
+	for idx := range spec.Networks {
+		if hasSecretsWifiNetwork(&spec.Networks[idx]) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// redactWifiSpecSpec redacts sensitive values in WifiSpecSpec in place.
+func redactWifiSpecSpec(spec *WifiSpecSpec) {
+	for idx := range spec.Networks {
+		redactWifiNetwork(&spec.Networks[idx])
+	}
 }
 
 // hasSecretsWireguardSpec checks if WireguardSpec carries any sensitive value.
@@ -206,6 +239,22 @@ func hasSecretsHTTPProbeSpec(spec *HTTPProbeSpec) bool {
 func redactHTTPProbeSpec(spec *HTTPProbeSpec) {
 	if spec.URL != nil && spec.URL.User != nil {
 		spec.URL.User = url.UserPassword(spec.URL.User.Username(), constants.Redacted)
+	}
+}
+
+// hasSecretsWifiNetwork checks if WifiNetwork carries any sensitive value.
+func hasSecretsWifiNetwork(spec *WifiNetwork) bool {
+	if spec.PSK != "" {
+		return true
+	}
+
+	return false
+}
+
+// redactWifiNetwork redacts sensitive values in WifiNetwork in place.
+func redactWifiNetwork(spec *WifiNetwork) {
+	if spec.PSK != "" {
+		spec.PSK = constants.Redacted
 	}
 }
 
