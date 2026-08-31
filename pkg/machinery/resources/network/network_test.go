@@ -60,6 +60,8 @@ func TestRegisterResource(t *testing.T) {
 		&network.Status{},
 		&network.TimeServerStatus{},
 		&network.TimeServerSpec{},
+		&network.WifiSpec{},
+		&network.WifiStatus{},
 	} {
 		assert.NoError(t, resourceRegistry.Register(ctx, resource))
 	}
