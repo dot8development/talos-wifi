@@ -22,6 +22,7 @@ type WifiSpec = typed.Resource[WifiSpecSpec, WifiSpecExtension]
 // WifiSpecSpec describes WiFi configuration of a wireless link.
 //
 //gotagsrewrite:gen
+//redactgen:gen
 type WifiSpecSpec struct {
 	CountryCode string        `yaml:"countryCode,omitempty" protobuf:"1"`
 	Networks    []WifiNetwork `yaml:"networks" protobuf:"2"`
@@ -32,7 +33,7 @@ type WifiSpecSpec struct {
 //gotagsrewrite:gen
 type WifiNetwork struct {
 	SSID   string `yaml:"ssid" protobuf:"1"`
-	PSK    string `yaml:"psk,omitempty" protobuf:"2"`
+	PSK    string `yaml:"psk,omitempty" protobuf:"2" redact:"replace"`
 	Hidden bool   `yaml:"hidden,omitempty" protobuf:"3"`
 }
 
