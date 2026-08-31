@@ -903,8 +903,15 @@ COPY --link --from=pkg-zlib-arm64 /usr/lib /rootfs/usr/lib
 # NOTE: amd64 ships igzip, but arm64 ships pigz (see https://github.com/siderolabs/extensions/discussions/931)
 COPY --link --from=pkg-pigz-arm64 / /rootfs
 COPY --link --from=pkg-wpa-supplicant-arm64 / /rootfs
-COPY --link --from=pkg-linux-firmware /usr/lib/firmware/regulatory.db /usr/lib/firmware/regulatory.db.p7s /rootfs/usr/lib/firmware/
-COPY --link --from=pkg-linux-firmware /usr/lib/firmware/iwlwifi-Qu*.ucode /rootfs/usr/lib/firmware/
+COPY --link --from=pkg-wireless-regdb /usr/lib/firmware/regulatory.db /usr/lib/firmware/regulatory.db.p7s /rootfs/usr/lib/firmware/
+# the iwlwifi driver requests firmware both with and without the intel/iwlwifi/ prefix
+# depending on the kernel version, so provide both layouts
+COPY --link --from=pkg-linux-firmware /usr/lib/firmware/intel/iwlwifi/iwlwifi-Qu*-hr-b0-*.ucode /rootfs/usr/lib/firmware/
+COPY --link --from=pkg-linux-firmware /usr/lib/firmware/intel/iwlwifi/iwlwifi-Qu*-hr-b0-*.ucode /rootfs/usr/lib/firmware/intel/iwlwifi/
+COPY --link --from=pkg-linux-firmware /usr/lib/firmware/intel/iwlwifi/iwlwifi-Qu*-jf-b0-*.ucode /rootfs/usr/lib/firmware/
+COPY --link --from=pkg-linux-firmware /usr/lib/firmware/intel/iwlwifi/iwlwifi-Qu*-jf-b0-*.ucode /rootfs/usr/lib/firmware/intel/iwlwifi/
+COPY --link --from=pkg-linux-firmware /usr/lib/firmware/intel/iwlwifi/iwlwifi-9000-pu-b0-jf-b0-*.ucode /rootfs/usr/lib/firmware/
+COPY --link --from=pkg-linux-firmware /usr/lib/firmware/intel/iwlwifi/iwlwifi-9000-pu-b0-jf-b0-*.ucode /rootfs/usr/lib/firmware/intel/iwlwifi/
 COPY --link --from=pkg-util-linux-arm64 /usr/lib/libblkid.* /rootfs/usr/lib/
 COPY --link --from=pkg-util-linux-arm64 /usr/lib/libuuid.* /rootfs/usr/lib/
 COPY --link --from=pkg-util-linux-arm64 /usr/lib/libmount.* /rootfs/usr/lib/
