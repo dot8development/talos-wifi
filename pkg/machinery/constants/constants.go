@@ -892,6 +892,18 @@ const (
 	// SelinuxLabelUdevd is the SELinux label for udevd runtime processes.
 	SelinuxLabelUdevd = "system_u:system_r:udev_t:s0"
 
+	// CgroupWpaSupplicant is the cgroup name for wpa_supplicant runtime processes.
+	CgroupWpaSupplicant = CgroupSystem + "/wpa_supplicant"
+
+	// WpaSupplicantRunDir is the directory for wpa_supplicant configuration and control sockets.
+	WpaSupplicantRunDir = "/run/wpa_supplicant"
+
+	// WpaSupplicantExtensionExecutablePath is the path to the wpa_supplicant binary shipped by the wifi system extension.
+	WpaSupplicantExtensionExecutablePath = "/usr/local/bin/wpa_supplicant"
+
+	// WpaSupplicantBakedExecutablePath is the fallback path to the wpa_supplicant binary for custom builds.
+	WpaSupplicantBakedExecutablePath = "/usr/bin/wpa_supplicant"
+
 	// CgroupExtensions is the cgroup name for system extension processes.
 	CgroupExtensions = CgroupSystem + "/extensions"
 
