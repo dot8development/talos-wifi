@@ -117,6 +117,18 @@ func (ctrl *WifiServiceController) reconcile(ctx context.Context, r controller.R
 		desired[linkName] = renderWpaSupplicantConfig(spec.TypedSpec())
 	}
 
+	// gate on the wpa_supplicant binary being available: it is either baked into the base
+	// image or shipped by the wifi system extension; if it is missing, log a clear error
+	// instead of crash-looping the supplicant services
+	if len(desired) > 0 {
+		if _, err := services.WpaSupplicantExecutablePath(); err != nil {
+			logger.Error("wifi configuration is present, but wpa_supplicant is not available; install the wifi system extension",
+				zap.Error(err))
+
+			desired = map[string]string{}
+		}
+	}
+
 	// stop supplicants which are no longer desired or whose config changed
 	for linkName, conf := range ctrl.running {
 		if desiredConf, ok := desired[linkName]; ok && desiredConf == conf {

@@ -7,6 +7,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/siderolabs/talos/internal/app/machined/pkg/runtime"
@@ -16,6 +17,7 @@ import (
 	"github.com/siderolabs/talos/internal/app/machined/pkg/system/runner"
 	"github.com/siderolabs/talos/internal/app/machined/pkg/system/runner/process"
 	"github.com/siderolabs/talos/internal/app/machined/pkg/system/runner/restart"
+	"github.com/siderolabs/talos/internal/pkg/capability"
 	"github.com/siderolabs/talos/pkg/conditions"
 	"github.com/siderolabs/talos/pkg/machinery/constants"
 )
@@ -36,6 +38,24 @@ func WpaSupplicantServiceID(linkName string) string {
 // WpaSupplicantConfigPath returns the wpa_supplicant configuration file path for the given wireless link.
 func WpaSupplicantConfigPath(linkName string) string {
 	return filepath.Join(constants.WifiSupplicantRunDir, linkName+".conf")
+}
+
+// WpaSupplicantExecutablePath resolves the wpa_supplicant binary location.
+//
+// The binary is shipped either by the wifi system extension (/usr/local/bin) or
+// baked into the base image (/usr/bin); the extension location takes precedence.
+func WpaSupplicantExecutablePath() (string, error) {
+	for _, path := range []string{
+		constants.WpaSupplicantExtensionExecutablePath,
+		constants.WpaSupplicantBakedExecutablePath,
+	} {
+		if _, err := os.Stat(path); err == nil {
+			return path, nil
+		}
+	}
+
+	return "", fmt.Errorf("wpa_supplicant binary is not available (checked %q and %q): is the wifi system extension installed?",
+		constants.WpaSupplicantExtensionExecutablePath, constants.WpaSupplicantBakedExecutablePath)
 }
 
 // ID implements the Service interface.
@@ -70,10 +90,15 @@ func (svc *WpaSupplicant) Volumes(runtime.Runtime) []string {
 
 // Runner implements the Service interface.
 func (svc *WpaSupplicant) Runner(r runtime.Runtime) (runner.Runner, error) {
+	executablePath, err := WpaSupplicantExecutablePath()
+	if err != nil {
+		return nil, err
+	}
+
 	args := &runner.Args{
 		ID: svc.ID(r),
 		ProcessArgs: []string{
-			"/usr/bin/wpa_supplicant",
+			executablePath,
 			"-i", svc.LinkName,
 			"-D", "nl80211",
 			"-c", WpaSupplicantConfigPath(svc.LinkName),
@@ -86,12 +111,19 @@ func (svc *WpaSupplicant) Runner(r runtime.Runtime) (runner.Runner, error) {
 		debug = r.Config().Debug()
 	}
 
+	// drop all capabilities except those required to drive the wireless interface
+	droppedCapabilities := capability.AllCapabilitiesSetLowercase()
+	delete(droppedCapabilities, "cap_net_admin")
+	delete(droppedCapabilities, "cap_net_raw")
+
 	return restart.New(
 		process.NewRunner(
 			debug,
 			args,
 			runner.WithLoggingManager(r.Logging()),
 			runner.WithCgroupPath(constants.CgroupWpaSupplicant),
+			runner.WithSelinuxLabel(constants.SelinuxLabelWpaSupplicant),
+			runner.WithDroppedCapabilities(droppedCapabilities),
 		),
 		restart.WithType(restart.Forever),
 	), nil
