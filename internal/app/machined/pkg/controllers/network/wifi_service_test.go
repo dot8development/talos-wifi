@@ -6,15 +6,17 @@ package network_test
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"sync"
 	"testing"
-	"time"
+	"testing/synctest"
 
-	"github.com/stretchr/testify/suite"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/siderolabs/talos/internal/app/machined/pkg/controllers/ctest"
 	netctrl "github.com/siderolabs/talos/internal/app/machined/pkg/controllers/network"
@@ -110,106 +112,19 @@ func (f *fakeServiceManager) Events() []string {
 	return slices.Clone(f.events)
 }
 
-type WifiServiceSuite struct {
-	ctest.DefaultSuite
+func TestWifiServiceController(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const (
+			wlan0Service = "wpa-supplicant-wlan0"
+			wlan1Service = "wpa-supplicant-wlan1"
+		)
 
-	manager *fakeServiceManager
-	runDir  string
-}
+		manager := newFakeServiceManager()
+		runDir := t.TempDir()
 
-// assertEvents waits for the fake service manager to record exactly the given events.
-func (suite *WifiServiceSuite) assertEvents(expected []string) {
-	suite.AssertWithin(5*time.Second, 10*time.Millisecond, func() error {
-		events := suite.manager.Events()
-
-		if !slices.Equal(expected, events) {
-			return fmt.Errorf("expected events %v, got %v", expected, events)
-		}
-
-		return nil
-	})
-}
-
-//nolint:gocyclo
-func (suite *WifiServiceSuite) TestReconcile() {
-	const (
-		wlan0Service = "wpa-supplicant-wlan0"
-		wlan1Service = "wpa-supplicant-wlan1"
-	)
-
-	// WifiSpec for an absent link: should be skipped without starting anything
-	specAbsent := network.NewWifiSpec(network.NamespaceName, "wlan1")
-	specAbsent.TypedSpec().Networks = []network.WifiNetwork{{SSID: "AbsentNetwork", PSK: "passphrase1"}}
-	suite.Create(specAbsent)
-
-	// WifiSpec for wlan0, link not present yet
-	spec := network.NewWifiSpec(network.NamespaceName, "wlan0")
-	spec.TypedSpec().CountryCode = "NL"
-	spec.TypedSpec().Networks = []network.WifiNetwork{{SSID: "HomeNetwork", PSK: "topsecretphrase"}}
-	suite.Create(spec)
-
-	// once the link appears, the supplicant should be started
-	linkStatus := network.NewLinkStatus(network.NamespaceName, "wlan0")
-	linkStatus.TypedSpec().Type = nethelpers.LinkEther
-	suite.Create(linkStatus)
-
-	suite.assertEvents([]string{"start:" + wlan0Service})
-
-	confPath := filepath.Join(suite.runDir, "wlan0.conf")
-
-	conf, err := os.ReadFile(confPath)
-	suite.Require().NoError(err)
-	suite.Assert().Contains(string(conf), "country=NL")
-
-	// changing the spec should restart the supplicant with the new configuration
-	ctest.UpdateWithConflicts(suite, spec, func(spec *network.WifiSpec) error {
-		spec.TypedSpec().Networks = []network.WifiNetwork{{SSID: "OtherNetwork", PSK: "otherpassphrase"}}
-
-		return nil
-	})
-
-	suite.assertEvents([]string{
-		"start:" + wlan0Service,
-		"stop:" + wlan0Service, "unload:" + wlan0Service,
-		"start:" + wlan0Service,
-	})
-
-	conf, err = os.ReadFile(confPath)
-	suite.Require().NoError(err)
-	suite.Assert().NotContains(string(conf), "country=")
-
-	// removing the spec should stop the supplicant and remove the configuration
-	suite.Destroy(spec)
-
-	suite.assertEvents([]string{
-		"start:" + wlan0Service,
-		"stop:" + wlan0Service, "unload:" + wlan0Service,
-		"start:" + wlan0Service,
-		"stop:" + wlan0Service, "unload:" + wlan0Service,
-	})
-
-	_, err = os.Stat(confPath)
-	suite.Assert().True(os.IsNotExist(err))
-
-	// the absent-link spec should never have been acted upon
-	for _, event := range suite.manager.Events() {
-		suite.Assert().NotContains(event, wlan1Service)
-	}
-}
-
-func TestWifiServiceSuite(t *testing.T) {
-	t.Parallel()
-
-	manager := newFakeServiceManager()
-	runDir := t.TempDir()
-
-	suite.Run(t, &WifiServiceSuite{
-		manager: manager,
-		runDir:  runDir,
-		DefaultSuite: ctest.DefaultSuite{
-			Timeout: 10 * time.Second,
-			AfterSetup: func(suite *ctest.DefaultSuite) {
-				suite.Require().NoError(suite.Runtime().RegisterController(&netctrl.WifiServiceController{
+		suite := &ctest.DefaultSuite{
+			AfterSetup: func(s *ctest.DefaultSuite) {
+				s.Require().NoError(s.Runtime().RegisterController(&netctrl.WifiServiceController{
 					V1Alpha1Services: manager,
 					RunDir:           runDir,
 					SupplicantPathFunc: func() (string, error) {
@@ -217,6 +132,83 @@ func TestWifiServiceSuite(t *testing.T) {
 					},
 				}))
 			},
-		},
+		}
+		suite.SetT(t)
+		suite.SetupTest()
+
+		defer suite.TearDownTest()
+
+		// WifiSpec for an absent link: should be skipped without starting anything
+		specAbsent := network.NewWifiSpec(network.NamespaceName, "wlan1")
+		specAbsent.TypedSpec().Networks = []network.WifiNetwork{{SSID: "AbsentNetwork", PSK: "passphrase1"}}
+		suite.Create(specAbsent)
+
+		// WifiSpec for wlan0, link not present yet
+		spec := network.NewWifiSpec(network.NamespaceName, "wlan0")
+		spec.TypedSpec().CountryCode = "NL"
+		spec.TypedSpec().Networks = []network.WifiNetwork{{SSID: "HomeNetwork", PSK: "topsecretphrase"}}
+		suite.Create(spec)
+
+		synctest.Wait()
+
+		require.Empty(t, manager.Events())
+
+		// once the link appears, the supplicant should be started
+		linkStatus := network.NewLinkStatus(network.NamespaceName, "wlan0")
+		linkStatus.TypedSpec().Type = nethelpers.LinkEther
+		suite.Create(linkStatus)
+
+		synctest.Wait()
+
+		require.Equal(t, []string{"start:" + wlan0Service}, manager.Events())
+
+		confPath := filepath.Join(runDir, "wlan0.conf")
+
+		conf, err := os.ReadFile(confPath)
+		require.NoError(t, err)
+		assert.Contains(t, string(conf), "country=NL")
+		// SSIDs are rendered in hex-encoded form
+		assert.Contains(t, string(conf), "ssid="+hex.EncodeToString([]byte("HomeNetwork")))
+
+		// changing the spec should restart the supplicant with the new configuration
+		ctest.UpdateWithConflicts(suite, spec, func(spec *network.WifiSpec) error {
+			spec.TypedSpec().CountryCode = ""
+			spec.TypedSpec().Networks = []network.WifiNetwork{{SSID: "OtherNetwork", PSK: "otherpassphrase"}}
+
+			return nil
+		})
+
+		synctest.Wait()
+
+		require.Equal(t, []string{
+			"start:" + wlan0Service,
+			"stop:" + wlan0Service, "unload:" + wlan0Service,
+			"start:" + wlan0Service,
+		}, manager.Events())
+
+		conf, err = os.ReadFile(confPath)
+		require.NoError(t, err)
+		assert.NotContains(t, string(conf), "country=")
+		assert.Contains(t, string(conf), "ssid="+hex.EncodeToString([]byte("OtherNetwork")))
+
+		// removing the spec should stop the supplicant and remove the configuration
+		suite.Destroy(spec)
+
+		synctest.Wait()
+
+		require.Equal(t, []string{
+			"start:" + wlan0Service,
+			"stop:" + wlan0Service, "unload:" + wlan0Service,
+			"start:" + wlan0Service,
+			"stop:" + wlan0Service, "unload:" + wlan0Service,
+		}, manager.Events())
+
+		_, err = os.Stat(confPath)
+		assert.True(t, os.IsNotExist(err))
+
+		// the absent-link spec should never have been acted upon
+		for _, event := range manager.Events() {
+			assert.NotContains(t, event, wlan1Service)
+		}
 	})
 }
