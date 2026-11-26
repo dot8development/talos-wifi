@@ -24,17 +24,21 @@ x86-64 (amd64) computer. Other cards need their firmware added to the image.
 
 ## Install on a computer — step by step
 
-You install from a USB stick. The very first boot needs a **temporary wired connection**
-(an Ethernet cable, a USB-Ethernet adapter, or phone USB tethering), because that is how you
-hand the machine its configuration — including your WiFi password. After it installs and
-reboots it connects to WiFi by itself and you can unplug the cable.
+No network cable needed. Your WiFi name and password go **inside the USB stick**, together with
+the rest of the machine's configuration. The computer boots from the stick, joins your WiFi,
+installs Talos onto its internal drive by itself, and from then on runs from that drive.
+
+> Tested end to end on 2026-11-26 in a virtual machine (boot from the stick → unattended install
+> onto NVMe → reboot without the stick → Talos runs from disk with its configuration). WiFi itself
+> was proven on the real EliteBook the same day.
 
 ### What you need
 
-- the computer to install on (everything on its internal NVMe drive will be replaced by Talos)
+- the computer to install on — x86-64 with one of the supported WiFi cards above (everything on its
+  internal NVMe drive is replaced by Talos)
 - a USB stick (1 GB or larger)
-- a temporary wired network connection for that computer
-- your own Mac or Linux machine with [Docker](https://www.docker.com/) and `git`
+- your own Mac or Linux machine with [Docker](https://www.docker.com/), `git` and the
+  [GitHub CLI](https://cli.github.com/) (`gh`), logged in to GitHub
 - your router's admin page (to give the computer a fixed IP address)
 
 ### 1. Get the tools
@@ -58,69 +62,28 @@ talosctl version --client           # should print v1.14.7-...
 
 Use this `talosctl`, not the upstream one: only the fork's version understands `NetworkWifiConfig`.
 
-### 2. Make the USB stick
+### 2. Pick the computer's IP address
 
-Build the boot image (one command, takes a minute or two):
+The configuration needs to know the address the computer will have on your WiFi. In your router's
+admin page, create a **DHCP reservation** for the computer's **WiFi MAC address** — e.g.
+`192.168.1.50`. Below this is `NODE_IP`.
 
-```sh
-mkdir -p _out
-docker run --rm -t -v "$PWD/_out:/out" \
-  ghcr.io/dot8development/imager:v1.14.7-20-g42b923c85 iso --arch amd64
-# -> _out/metal-amd64.iso
-```
+The WiFi MAC is printed on a sticker on many laptops, shown in the BIOS/UEFI setup, or listed in the
+router's client list if the computer has been on this WiFi before (under its old operating system).
 
-Write it to the USB stick. **Double-check the disk number — this erases that disk.**
+### 3. Write the configuration
 
-macOS:
-
-```sh
-diskutil list                              # find the stick, e.g. /dev/disk4
-diskutil unmountDisk /dev/disk4
-sudo dd if=_out/metal-amd64.iso of=/dev/rdisk4 bs=4m
-diskutil eject /dev/disk4
-```
-
-Linux:
-
-```sh
-lsblk                                      # find the stick, e.g. /dev/sdb
-sudo dd if=_out/metal-amd64.iso of=/dev/sdb bs=4M oflag=sync status=progress
-```
-
-### 3. Boot the computer from the stick
-
-1. Plug in the USB stick **and** the wired connection.
-2. In the BIOS/UEFI setup, **turn off Secure Boot** (this image is not signed), then boot
-   from the USB stick (on HP laptops press `F9` at power-on for the boot menu).
-3. Talos starts in *maintenance mode*. The screen shows the computer's IP address on the
-   wired network — write it down (below: `WIRED_IP`).
-
-### 4. Find the WiFi card and reserve an IP for it
-
-From your own machine:
-
-```sh
-talosctl get links --insecure -n WIRED_IP
-```
-
-Look for the link whose name starts with `wl` (for example `wlp0s20f3` or `wlan0`) and note
-its `HW ADDR` (MAC address).
-
-In your router's admin page, create a **DHCP reservation** so that MAC address always gets the
-same IP, e.g. `192.168.1.50`. Below this is `NODE_IP`.
-
-### 5. Write the configuration
-
-Create `wifi.yaml` — put in your WiFi name and password, and the `wl…` link name from step 4.
-Listing a second common name (`wlan0`) is harmless; Talos uses whichever exists.
+Create `wifi.yaml` — put in your WiFi name and password. You don't need to know what Linux will call
+the WiFi card: the file lists the usual names, and Talos uses whichever one exists.
 
 ```yaml
+# Your WiFi network, once per possible interface name
 apiVersion: v1alpha1
 kind: NetworkWifiConfig
-name: wlp0s20f3            # <- your wl… link name from step 4
+name: wlp0s20f3
 networks:
-  - ssid: "MyNetwork"      # <- your WiFi name
-    psk: "my-wifi-password" # <- your WiFi password
+  - ssid: "MyNetwork"        # <- your WiFi name
+    psk: "my-wifi-password"  # <- your WiFi password
 ---
 apiVersion: v1alpha1
 kind: NetworkWifiConfig
@@ -129,7 +92,14 @@ networks:
   - ssid: "MyNetwork"
     psk: "my-wifi-password"
 ---
-# Install Talos on the internal NVMe drive
+apiVersion: v1alpha1
+kind: NetworkWifiConfig
+name: wlo1
+networks:
+  - ssid: "MyNetwork"
+    psk: "my-wifi-password"
+---
+# Install Talos on the internal NVMe drive by itself
 apiVersion: v1alpha1
 kind: UnattendedInstallConfig
 provisioning:
@@ -177,24 +147,72 @@ talosctl validate --config cluster/controlplane.yaml --mode metal   # must say "
 > The `cluster/` folder now holds your cluster's keys and your WiFi password: keep it private
 > and backed up, never commit it.
 
-### 6. Install
+### 4. Make the USB stick (with your configuration inside)
 
 ```sh
-talosctl apply-config --insecure -n WIRED_IP --file cluster/controlplane.yaml
+mkdir -p _out
+docker run --rm -t -v "$PWD/_out:/out" -v "$PWD/cluster:/cfg:ro" \
+  ghcr.io/dot8development/imager:v1.14.7-20-g42b923c85 \
+  iso --arch amd64 --embedded-config-path /cfg/controlplane.yaml
+# -> _out/metal-amd64.iso   (takes a minute or two)
 ```
 
-Talos installs itself on the NVMe drive and reboots (a few minutes). When the screen shows it
-rebooting, **remove the USB stick and unplug the wired connection.** It comes back up on WiFi
-at `NODE_IP`.
+Write it to the USB stick. **Double-check the disk number — this erases that disk.**
 
-### 7. Start Kubernetes
+macOS:
+
+```sh
+diskutil list                              # find the stick, e.g. /dev/disk4
+diskutil unmountDisk /dev/disk4
+sudo dd if=_out/metal-amd64.iso of=/dev/rdisk4 bs=4m
+diskutil eject /dev/disk4
+```
+
+Linux:
+
+```sh
+lsblk                                      # find the stick, e.g. /dev/sdb
+sudo dd if=_out/metal-amd64.iso of=/dev/sdb bs=4M oflag=sync status=progress
+```
+
+> The stick now contains your cluster keys and WiFi password. Wipe it (or write something else over
+> it) once the installation is finished.
+
+### 5. Boot from the stick — it installs itself
+
+1. Plug in the USB stick.
+2. In the BIOS/UEFI setup, **turn off Secure Boot** (this image is not signed), then boot
+   from the USB stick (on HP laptops press `F9` at power-on for the boot menu).
+3. Talos starts, joins your WiFi and installs itself onto the NVMe drive in the background. The
+   screen shows its progress and IP address. Give it 5–10 minutes.
+
+From your own machine, check when the installation is done:
 
 ```sh
 export TALOSCONFIG="$PWD/cluster/talosconfig"
 talosctl config endpoint NODE_IP
 talosctl config node NODE_IP
 
-talosctl get wifistatus     # should show your SSID and "associated"
+talosctl get unattendedinstallstatus     # wait until PHASE says "installed"
+talosctl get wifistatus                  # your SSID and "associated"
+```
+
+When it says `installed`: **pull out the USB stick**, then restart the computer so it boots from
+its own drive:
+
+```sh
+talosctl reboot
+```
+
+(It does not restart on its own after installing — it keeps running from the stick until you
+reboot it.)
+
+### 6. Start Kubernetes
+
+After the reboot (a minute or two) the computer is back on your WiFi at `NODE_IP`:
+
+```sh
+talosctl version            # Server: v1.14.7-... — now running from the drive
 talosctl bootstrap          # run this ONCE, only on a brand-new cluster
 talosctl health             # wait until everything is OK (a few minutes)
 
@@ -203,6 +221,22 @@ kubectl --kubeconfig ./kubeconfig get nodes
 ```
 
 Done — the node shows `Ready` and you can deploy to it.
+
+### Alternative: install with a temporary network cable
+
+If you would rather not put the configuration on the stick (or the computer does have an Ethernet
+port), build the plain image instead —
+`docker run --rm -t -v "$PWD/_out:/out" ghcr.io/dot8development/imager:v1.14.7-20-g42b923c85 iso --arch amd64`
+— boot it with an Ethernet cable, USB-Ethernet adapter or phone USB tethering plugged in, note the
+wired IP shown on screen (`WIRED_IP`) and send it the configuration:
+
+```sh
+talosctl get links --insecure -n WIRED_IP     # optional: the real wl… name of the WiFi card
+talosctl apply-config --insecure -n WIRED_IP --file cluster/controlplane.yaml
+```
+
+It installs onto the drive and reboots; remove the stick and the cable while it restarts. It comes
+back on WiFi at `NODE_IP` — continue with step 6.
 
 ---
 
