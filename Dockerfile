@@ -283,7 +283,10 @@ SHELL ["/bin/bash", "-c"]
 FROM --platform=${BUILDPLATFORM} tools AS build
 SHELL ["/bin/bash", "-c"]
 ENV GO111MODULE=on
-ENV GOPROXY=https://proxy.golang.org
+ENV GOPROXY=https://proxy.golang.org,https://goproxy.cn
+# goproxy.cn is a fallback for modules proxy.golang.org never cached and whose
+# source repo is gone (github.com/ONSdigital/dp-mocking, pulled in by tools/go.mod);
+# go.sum still verifies every download.
 ARG CGO_ENABLED
 ENV CGO_ENABLED=${CGO_ENABLED}
 ARG GOFIPS140
