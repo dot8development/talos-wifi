@@ -52,7 +52,11 @@ PKG_GRUB ?= $(PKGS_PREFIX)/grub:$(PKGS)
 PKG_IGZIP ?= $(PKGS_PREFIX)/igzip:$(PKGS)
 PKG_IPTABLES ?= $(PKGS_PREFIX)/iptables:$(PKGS)
 PKG_IPXE ?= $(PKGS_PREFIX)/ipxe:$(PKGS)
-PKG_KERNEL ?= $(PKGS_PREFIX)/kernel:$(PKGS)
+# WiFi fork: the kernel (wireless enabled), wpa-supplicant and wireless-regdb come
+# from dot8development/pkgs branch wifi-1.14 (upstream $(PKGS) + 4 wifi commits).
+WIFI_PKGS_PREFIX ?= ghcr.io/dot8development
+WIFI_PKGS ?= v1.14.0-70-g462a19f
+PKG_KERNEL ?= $(WIFI_PKGS_PREFIX)/kernel:$(WIFI_PKGS)
 PKG_KMOD ?= $(PKGS_PREFIX)/kmod:$(PKGS)
 PKG_LIBAIO ?= $(PKGS_PREFIX)/libaio:$(PKGS)
 PKG_LIBARCHIVE ?= $(PKGS_PREFIX)/libarchive:$(PKGS)
@@ -90,8 +94,8 @@ PKG_SYSTEMD_UDEVD ?= $(PKGS_PREFIX)/systemd-udevd:$(PKGS)
 PKG_TALOSCTL_CNI_BUNDLE ?= $(PKGS_PREFIX)/talosctl-cni-bundle:$(PKGS)
 PKG_TAR ?= $(PKGS_PREFIX)/tar:$(PKGS)
 PKG_UTIL_LINUX ?= $(PKGS_PREFIX)/util-linux:$(PKGS)
-PKG_WIRELESS_REGDB ?= $(PKGS_PREFIX)/wireless-regdb:$(PKGS)
-PKG_WPA_SUPPLICANT ?= $(PKGS_PREFIX)/wpa-supplicant:$(PKGS)
+PKG_WIRELESS_REGDB ?= $(WIFI_PKGS_PREFIX)/wireless-regdb:$(WIFI_PKGS)
+PKG_WPA_SUPPLICANT ?= $(WIFI_PKGS_PREFIX)/wpa-supplicant:$(WIFI_PKGS)
 PKG_XFSPROGS ?= $(PKGS_PREFIX)/xfsprogs:$(PKGS)
 PKG_XZ ?= $(PKGS_PREFIX)/xz:$(PKGS)
 PKG_ZLIB ?= $(PKGS_PREFIX)/zlib:$(PKGS)
